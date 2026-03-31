@@ -154,6 +154,23 @@ In enako v `src/i18n/messages/en.json` za angleško različico.
    Lokalno z nastavljenim `DATABASE_URL` na produkcijsko bazo ali prek Vercel CLI / CI. Brez tega tabele ne obstajajo.
 6. Če spremeniš env (npr. `NEXTAUTH_URL`), naredi **Redeploy**.
 
+**Če `git push` vrne `remote: Repository not found` (repozitorij na GitHubu obstaja)**  
+GitHub pogosto vrne 404, če **OAuth / shranjene poverilnice** pripadajo **drugemu** računu kot lastniku repozitorija. Rešitve:
+
+1. **Personal Access Token (hitro)** — prijavi se kot **BostjanAl** → **Settings → Developer settings → Personal access tokens (classic)** → **Generate** → obkljukaj **`repo`**. V CMD (zamenjaj `TOKEN`):
+   ```cmd
+   git push -u https://BostjanAl:TOKEN@github.com/BostjanAl/Mali-Ustvarjalci.git main
+   ```
+   Token ne sme vsebovati presledkov. Ukaz lahko ostane v zgodovini CMD — po uspehu raje uporabi **SSH** spodaj ali shrani poverilnico varno. Nato `git remote -v` še vedno kaže `https://github.com/...` — to je v redu.
+
+2. **SSH (priporočeno za stalno)** — `ssh-keygen -t ed25519`, javni ključ dodaj na GitHub (**Settings → SSH keys**), nato:
+   ```cmd
+   git remote set-url origin git@github.com:BostjanAl/Mali-Ustvarjalci.git
+   git push -u origin main
+   ```
+
+3. Pomoč: skripta `scripts/clear-github-credentials.ps1` + v **Credential Manager** zavihek **Web Credentials** → odstrani `github.com`.
+
 **Možnost B: Docker (lastni strežnik)**
 ```bash
 npm run build

@@ -56,3 +56,6 @@ prisma/dev.db-journal
 
 # Sentry
 .sentryclirc
+
+# Local backups made before applying storefront improvements
+.codex-backups/

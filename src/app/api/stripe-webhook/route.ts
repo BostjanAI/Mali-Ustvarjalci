@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { sendOrderConfirmation } from '@/lib/email';
 import { forwardOrderToSupplier } from '@/lib/supplierForward';
 import { rateLimit } from '@/lib/rateLimit';
+import { readCartMetadata } from '@/lib/checkoutPricing';
 
 export async function POST(req: Request) {
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', { apiVersion: '2024-06-20' });
@@ -28,8 +29,7 @@ export async function POST(req: Request) {
 
     let cart: Array<{ id?: string; slug?: string; title: string; priceCents: number; quantity: number }> = [];
     try {
-      const cartRaw = (session.metadata as any)?.cart as string | undefined;
-      if (cartRaw) cart = JSON.parse(cartRaw);
+      cart = readCartMetadata(session.metadata);
     } catch {}
 
     const order = await prisma.order.create({

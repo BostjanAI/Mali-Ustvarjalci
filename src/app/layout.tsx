@@ -1,10 +1,12 @@
 import './globals.css';
-import type { Metadata } from 'next';
-import { Analytics } from '@vercel/analytics/react';
-import { Poppins } from 'next/font/google';
+import './modern.css';
+import localFont from 'next/font/local';
+const manrope = localFont({ src: '../../public/fonts/Manrope-Variable.ttf', variable: '--font-manrope', weight: '200 800', display: 'swap' });
+import type { Metadata, Viewport } from 'next';
+import ConsentAnalytics from '@/components/ConsentAnalytics';
+
 import { ToastProvider } from '@/components/ui/Toast';
 
-const poppins = Poppins({ subsets: ['latin'], weight: ['400', '500', '600', '700'] });
 
 const siteUrl = process.env.NEXTAUTH_URL || 'https://www.mali-ustvarjalci.si';
 
@@ -14,8 +16,8 @@ export const metadata: Metadata = {
     default: 'Mali Ustvarjalci',
     template: '%s | Mali Ustvarjalci',
   },
-  description: 'Dropshipping web shop for creative products',
-  keywords: ['creative products', 'children', 'dropshipping', 'online shop', 'mali ustvarjalci'],
+  description: 'Ustvarjalne igrače, lesene igrače in likovni pripomočki za male roke in velike ideje.',
+  keywords: ['ustvarjalne igrače', 'lesene igrače', 'likovni material', 'igrače za otroke', 'mali ustvarjalci'],
   authors: [{ name: 'Mali Ustvarjalci' }],
   creator: 'Mali Ustvarjalci',
   publisher: 'Mali Ustvarjalci',
@@ -24,14 +26,14 @@ export const metadata: Metadata = {
     locale: 'sl_SI',
     siteName: 'Mali Ustvarjalci',
     title: 'Mali Ustvarjalci',
-    description: 'Dropshipping web shop for creative products',
+    description: 'Mali svet velikih idej. Igrače in ustvarjalni pripomočki za otroška odkritja.',
     url: siteUrl,
   },
   twitter: {
     card: 'summary_large_image',
   },
   robots: {
-    index: true,
+    index: process.env.NEXT_PUBLIC_MOCK_MODE !== 'true',
     follow: true,
   },
   alternates: {
@@ -41,23 +43,17 @@ export const metadata: Metadata = {
       'en': '/en',
     },
   },
-  viewport: {
-    width: 'device-width',
-    initialScale: 1,
-    maximumScale: 5,
-  },
-  verification: {
-    google: 'add-your-google-verification-code',
-  },
 };
+
+export const viewport: Viewport = { width: 'device-width', initialScale: 1, maximumScale: 5 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="sl">
-      <body className={poppins.className}>
+      <body className={manrope.variable}>
         <ToastProvider>
           {children}
-          <Analytics />
+          <ConsentAnalytics />
         </ToastProvider>
       </body>
     </html>

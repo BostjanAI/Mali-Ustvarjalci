@@ -1,14 +1,6 @@
-import {getRequestConfig} from 'next-intl/server';
-
-export default getRequestConfig(async (ctx: any) => {
-  const supportedLocales = ['sl', 'en'] as const;
-  const incomingLocale = ctx?.locale;
-  const resolvedLocale = supportedLocales.includes(incomingLocale as any) ? (incomingLocale as any) : 'sl';
-
-  return {
-    locale: resolvedLocale,
-    messages: (await import(`./messages/${resolvedLocale}.json`)).default
-  };
+import { getRequestConfig } from 'next-intl/server';
+export default getRequestConfig(async ({ requestLocale }) => {
+ const requested = await requestLocale;
+ const locale = requested === 'en' ? 'en' : 'sl';
+ return { locale, timeZone: 'Europe/Ljubljana', messages: (await import('./messages/' + locale + '.json')).default };
 });
-
-

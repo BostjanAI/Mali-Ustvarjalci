@@ -1,10 +1,3 @@
 import { NextResponse } from 'next/server';
-import { sendOrderConfirmation } from '@/lib/email';
-
-export async function POST(req: Request) {
-  const { email } = (await req.json().catch(() => ({}))) as { email?: string };
-  if (email) {
-    await sendOrderConfirmation(email, 'DEV-STUB');
-  }
-  return NextResponse.json({ ok: true });
-}
+// Retired development stub. A failed payment must never become a confirmed order.
+export async function POST(){return NextResponse.json({error:'Use the payment checkout endpoint. No order has been created.'},{status:410});}

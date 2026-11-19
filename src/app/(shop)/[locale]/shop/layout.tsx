@@ -6,11 +6,11 @@ export async function generateMetadata({ params }: { params: { locale: string } 
   const canonicalUrl = `${siteUrl}/${params.locale}/shop`;
   
   return {
-    title: 'Shop',
-    description: 'Browse our collection of creative products for children',
+    title: params.locale === 'en' ? 'Discover the collection' : 'Svet malih odkritij',
+    description: params.locale === 'en' ? 'Creative toys and materials for curious little minds.' : 'Igrače in ustvarjalni pripomočki za radovedne male ustvarjalce.',
     openGraph: {
       title: 'Shop | Mali Ustvarjalci',
-      description: 'Browse our collection of creative products for children',
+      description: params.locale === 'en' ? 'Creative toys and materials for curious little minds.' : 'Igrače in ustvarjalni pripomočki za radovedne male ustvarjalce.',
       type: 'website',
       url: canonicalUrl,
       locale: params.locale === 'en' ? 'en_US' : 'sl_SI',
@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: { params: { locale: string } 
     twitter: {
       card: 'summary_large_image',
       title: 'Shop | Mali Ustvarjalci',
-      description: 'Browse our collection of creative products for children',
+      description: params.locale === 'en' ? 'Creative toys and materials for curious little minds.' : 'Igrače in ustvarjalni pripomočki za radovedne male ustvarjalce.',
     },
     alternates: {
       canonical: canonicalUrl,

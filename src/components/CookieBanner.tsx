@@ -1,50 +1,9 @@
-"use client";
-
+'use client';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useTranslations } from 'next-intl';
-import { getConsent, setConsent } from '@/lib/cookies';
-
-export default function CookieBanner() {
-  const params = useParams<{ locale: string }>();
-  const locale = params?.locale || 'sl';
-  const t = useTranslations();
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    const c = getConsent();
-    setVisible(!c);
-  }, []);
-  if (!visible) return null;
-  return (
-    <div className="fixed inset-x-0 bottom-0 z-50 bg-white/95 backdrop-blur border-t shadow p-4">
-      <div className="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-3 text-sm">
-        <p>
-          {t('cookies.message')}{' '}
-          <a href={`/${locale}/legal/cookies`} className="underline">{t('cookies.link')}</a>.
-        </p>
-        <div className="flex gap-2">
-          <button
-            className="border px-3 py-1 rounded"
-            onClick={() => {
-              setConsent('rejected');
-              setVisible(false);
-            }}
-          >
-            {t('cookies.reject')}
-          </button>
-          <button
-            className="bg-black text-white px-3 py-1 rounded"
-            onClick={() => {
-              setConsent('accepted');
-              setVisible(false);
-            }}
-          >
-            {t('cookies.accept')}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+import { getConsent,setConsent } from '@/lib/cookies';
+export default function CookieBanner(){
+ const locale=useParams<{locale:string}>()?.locale||'sl';const en=locale==='en';const [visible,setVisible]=useState(false);useEffect(()=>setVisible(!getConsent()),[]);if(!visible)return null;
+ return <section className="cookie-panel" aria-label={en?'Cookie preferences':'Nastavitve piškotkov'}><p>{en?'We save your cart on this device. Optional analytics is enabled only with your consent.':'Košarico shranimo na tej napravi. Neobvezno analitiko vključimo le s tvojim soglasjem.'}{' '}<Link className="text-link" style={{fontSize:'inherit'}} href={'/'+locale+'/legal/cookies'}>{en?'More information':'Več informacij'}</Link></p><div className="cookie-actions"><button className="secondary-btn" onClick={()=>{setConsent('rejected');setVisible(false)}}>{en?'Necessary only':'Samo nujni'}</button><button className="primary-btn" onClick={()=>{setConsent('accepted');setVisible(false)}}>{en?'Accept analytics':'Sprejmi analitiko'}</button></div></section>;
 }
-
-

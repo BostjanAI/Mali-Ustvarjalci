@@ -1,47 +1,15 @@
-import { getTranslations } from 'next-intl/server';
-import { Star, Truck, Leaf, HeartHandshake } from 'lucide-react';
-
-const BRAND_ICONS = [Star, Truck, Leaf, HeartHandshake];
-
-type BrandKey = 'quality' | 'shipping' | 'eco' | 'support';
-const BRAND_KEYS: BrandKey[] = ['quality', 'shipping', 'eco', 'support'];
-
-const ICON_STYLES = [
-  'bg-brand-100 text-brand-600',
-  'bg-emerald-100 text-emerald-600',
-  'bg-green-100 text-green-600',
-  'bg-rose-100 text-rose-600',
-];
-
-export default async function BrandSection() {
-  const t = await getTranslations('home.brand');
-
-  return (
-    <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16 sm:py-20">
-      <div className="text-center mb-12">
-        <h2 className="text-3xl sm:text-4xl font-bold text-gray-900">{t('title')}</h2>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-        {BRAND_KEYS.map((key, idx) => {
-          const Icon = BRAND_ICONS[idx];
-          return (
-            <div key={key} className="flex flex-col items-center text-center gap-4">
-              <div className={['w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0', ICON_STYLES[idx]].join(' ')}>
-                <Icon className="w-7 h-7" />
-              </div>
-              <div>
-                <h3 className="font-bold text-gray-900 text-base mb-1.5">
-                  {t(`${key}.title`)}
-                </h3>
-                <p className="text-sm text-gray-500 leading-relaxed">
-                  {t(`${key}.desc`)}
-                </p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
+import Link from 'next/link';
+import { Sprout, Hand, Heart } from 'lucide-react';
+export default function BrandSection({ locale }: { locale: string }) {
+ const en=locale==='en';
+ const principles=en?[
+  {Icon:Sprout,title:'Let curiosity lead',text:'Follow what captures their attention. Make room for questions, experiments and little discoveries.'},
+  {Icon:Hand,title:'Let little hands try',text:'Drawing, folding and building give children room to explore at their own pace.'},
+  {Icon:Heart,title:'Make time together',text:'Sometimes the best part is sitting down, joining in and seeing where their ideas take you.'}
+ ]:[
+  {Icon:Sprout,title:'Naj vodi radovednost',text:'Sledi temu, kar otroka pritegne. Pusti prostor vprašanjem, poskusom in majhnim odkritjem.'},
+  {Icon:Hand,title:'Naj poskusijo male roke',text:'Risanje, prepogibanje in sestavljanje ponujajo prostor za raziskovanje v lastnem ritmu.'},
+  {Icon:Heart,title:'Naj ostane čas za skupaj',text:'Včasih je najlepši del to, da se usedemo zraven in pogledamo, kam nas odpelje otroška zamisel.'}
+ ];
+ return <><section className="story-section"><div className="site-wrap story-grid"><div><div className="eyebrow">{en?'Our little philosophy':'Naša mala filozofija'}</div><h2 className="section-title" style={{marginTop:15}}>{en?'The best ideas\nstart with play.':'Najlepše ideje\nse začnejo z igro.'}</h2><p>{en?'A toy is an invitation. What happens next belongs to a child’s imagination. We want to make room for exactly that.':'Igrača je povabilo. Kar se zgodi potem, je stvar otroške domišljije. Mi želimo odpreti prostor prav zanjo.'}</p><Link href={'/' + locale + '/shop'} className="text-link">{en?'Find your inspiration':'Poišči svoj navdih'}</Link></div><div className="principle-list">{principles.map(({Icon,title,text})=><div key={title} className="principle"><Icon aria-hidden="true"/><div><h3>{title}</h3><p>{text}</p></div></div>)}</div></div></section><section className="faq-section"><div className="site-wrap faq-grid"><div><div className="eyebrow">{en?'A little help':'Malo pomoči pri izbiri'}</div><h2 className="section-title" style={{marginTop:15}}>{en?'Curious?\nSo are we.':'Radovedni?\nTudi mi smo.'}</h2></div><div className="faq-list"><details><summary>{en?'How do I choose a toy?':'Kako izberem primerno igračo?'}</summary><p>{en?'Start with the child’s interests, then check the manufacturer’s age guidance and safety instructions. Category and price filters can help narrow your choice.':'Začni z otrokovimi zanimanji, nato preveri starostno oznako in varnostna navodila proizvajalca. Pri ožjem izboru si pomagaj s kategorijami in cenovnim filtrom.'}</p></details><details><summary>{en?'What can I find in the demo collection?':'Kaj prikazuje predstavitveni katalog?'}</summary><p>{en?'When demo mode is enabled, products, illustrations and prices demonstrate the store. They do not confirm availability, age suitability or manufacturer specifications.':'V predstavitvenem načinu so izdelki, ilustracije in cene namenjeni prikazu trgovine. Ne potrjujejo dobavljivosti, starostne primernosti ali lastnosti proizvajalca.'}</p></details><details><summary>{en?'Where can I find purchase information?':'Kje najdem informacije o nakupu?'}</summary><p><Link className="text-link" href={'/' + locale + '/legal/terms'}>{en?'Purchase terms':'Pogoji nakupa'}</Link>{en?' and ':' in '}<Link className="text-link" href={'/' + locale + '/legal/returns'}>{en?'returns information':'informacije o vračilih'}</Link>{en?' are always linked in the footer.':' so vedno dostopni tudi v nogi strani.'}</p></details></div></div></section></>;
 }

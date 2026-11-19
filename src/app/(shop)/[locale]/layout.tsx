@@ -4,6 +4,7 @@ import { unstable_setRequestLocale } from 'next-intl/server';
 import { getMessages, Locale } from '@/i18n';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
+import CookieBanner from '@/components/CookieBanner';
 
 export default async function ShopLayout({
   children,
@@ -16,14 +17,15 @@ export default async function ShopLayout({
   const messages = await getMessages(params.locale);
 
   return (
-    <NextIntlClientProvider messages={messages} locale={params.locale}>
+    <NextIntlClientProvider messages={messages} locale={params.locale} timeZone="Europe/Ljubljana" now={new Date()}>
       <div className="flex flex-col min-h-screen">
         <Header locale={params.locale} />
-        <main className="flex-1">
+        <main id="main-content" className="flex-1">
           {children}
         </main>
         <Footer locale={params.locale} />
       </div>
+    <CookieBanner />
     </NextIntlClientProvider>
   );
 }

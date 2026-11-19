@@ -1,153 +1,26 @@
-"use client";
-
+'use client';
 import Link from 'next/link';
-import Image from 'next/image';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
-import { useTranslations } from 'next-intl';
-import { useCartStore } from '@/lib/cartStore';
-import { formatCurrencyCents } from '@/lib/i18n';
-
+import { useEffect, useState } from 'react';
+import { Search, SlidersHorizontal, X, Info, RotateCcw } from 'lucide-react';
+import { CATEGORIES, CatalogProduct, categoryLabel, positiveInt, productCount } from '@/lib/catalog';
+import ProductCard from '@/components/ProductCard';
 export default function ShopPage() {
-  const addItem = useCartStore((s) => s.addItem);
-  const params = useParams<{ locale: string }>();
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const t = useTranslations();
-  const locale = params?.locale || 'sl';
-  const intlLocale = locale === 'en' ? 'en-US' : 'sl-SI';
-  const [loading, setLoading] = useState(false);
-  const [items, setItems] = useState<Array<{ id: string; slug: string; title: string; priceCents: number; images: string[] }>>([]);
-  const [total, setTotal] = useState(0);
-  const page = parseInt(searchParams?.get('page') || '1', 10);
-  const sort = searchParams?.get('sort') || 'newest';
-  const q = searchParams?.get('q') || '';
-
-  useEffect(() => {
-    const controller = new AbortController();
-    async function load() {
-      setLoading(true);
-      try {
-        const res = await fetch(`/api/search?${new URLSearchParams({ page: String(page), sort, q })}`, {
-          signal: controller.signal,
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        setItems(data.items);
-        setTotal(data.total);
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-    return () => controller.abort();
-  }, [page, sort, q]);
-
-  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / 12)), [total]);
-  const jsonLd = items.map((p) => ({
-    '@context': 'https://schema.org',
-    '@type': 'Product',
-    name: p.title,
-    sku: p.id,
-    offers: {
-      '@type': 'Offer',
-      priceCurrency: 'EUR',
-      price: (p.priceCents / 100).toFixed(2),
-      availability: 'https://schema.org/InStock',
-    },
-  }));
-
-  return (
-    <main className="mx-auto max-w-6xl p-6">
-      <h1 className="text-2xl font-semibold mb-6">{t('shop.title')}</h1>
-      <div className="flex items-center gap-3 mb-4">
-        <input
-          className="border rounded px-3 py-2 text-sm"
-          placeholder={t('shop.search')}
-          defaultValue={q}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              const next = new URLSearchParams(searchParams?.toString() || '');
-              next.set('q', (e.target as HTMLInputElement).value);
-              next.set('page', '1');
-              router.push(`/${locale}/shop?${next.toString()}`);
-            }
-          }}
-        />
-        <select
-          className="border rounded px-2 py-2 text-sm"
-          value={sort}
-          onChange={(e) => {
-            const next = new URLSearchParams(searchParams?.toString() || '');
-            next.set('sort', e.target.value);
-            router.push(`/${locale}/shop?${next.toString()}`);
-          }}
-        >
-          <option value="newest">{t('shop.sortNewest')}</option>
-          <option value="price_asc">{t('shop.sortPriceAsc')}</option>
-          <option value="price_desc">{t('shop.sortPriceDesc')}</option>
-        </select>
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-        {items.map((p) => (
-          <div key={p.id} className="border rounded p-3 hover:shadow flex flex-col">
-            <Link href={`/${locale}/shop/${p.slug}`} className="block">
-              <div className="aspect-square bg-gray-100 overflow-hidden rounded relative">
-                {Array.isArray(p.images) && p.images.length > 0 ? (
-                  <Image 
-                    src={p.images[0]} 
-                    alt={p.title} 
-                    fill
-                    className="object-cover"
-                    sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-                  />
-                ) : (
-                  <div className="w-full h-full" />
-                )}
-              </div>
-              <div className="mt-2 font-medium">{p.title}</div>
-              <div className="text-sm text-gray-600">{formatCurrencyCents(p.priceCents, intlLocale)} ({t('shop.withVat')})</div>
-            </Link>
-            <button
-              className="mt-3 rounded bg-black text-white py-2 text-sm"
-              onClick={() => addItem({ id: p.id, slug: p.slug, title: p.title, priceCents: p.priceCents })}
-            >
-              {t('shop.addToCart')}
-            </button>
-          </div>
-        ))}
-      </div>
-      <div className="flex items-center justify-center gap-3 mt-6">
-        <button
-          className="px-3 py-1 border rounded disabled:opacity-50"
-          disabled={page <= 1 || loading}
-          onClick={() => {
-            const next = new URLSearchParams(searchParams?.toString() || '');
-            next.set('page', String(page - 1));
-            router.push(`/${locale}/shop?${next.toString()}`);
-          }}
-        >
-          {t('shop.prev')}
-        </button>
-        <div className="text-sm">
-          {t('shop.page')} {page} / {totalPages}
-        </div>
-        <button
-          className="px-3 py-1 border rounded disabled:opacity-50"
-          disabled={page >= totalPages || loading}
-          onClick={() => {
-            const next = new URLSearchParams(searchParams?.toString() || '');
-            next.set('page', String(page + 1));
-            router.push(`/${locale}/shop?${next.toString()}`);
-          }}
-        >
-          {t('shop.next')}
-        </button>
-      </div>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-    </main>
-  );
+ const params=useParams<{locale:string}>();const sp=useSearchParams();const router=useRouter();
+ const locale=params?.locale || 'sl';const en=locale==='en';
+ const query=sp?.toString() || '';const page=positiveInt(sp?.get('page') || null,1);
+ const category=sp?.get('category') || '';const q=sp?.get('q') || '';const minPrice=sp?.get('minPrice') || '';const maxPrice=sp?.get('maxPrice') || '';const brand=sp?.get('brand') || '';const sort=sp?.get('sort') || 'newest';
+ const [items,setItems]=useState<CatalogProduct[]>([]);const [total,setTotal]=useState(0);const [loading,setLoading]=useState(true);const [error,setError]=useState(false);const [demo,setDemo]=useState(false);const [filtersOpen,setFiltersOpen]=useState(false);const [retry,setRetry]=useState(0);
+ const [search,setSearch]=useState(q);const [min,setMin]=useState(minPrice);const [max,setMax]=useState(maxPrice);
+ useEffect(()=>{setSearch(q);setMin(minPrice);setMax(maxPrice)},[q,minPrice,maxPrice]);
+ function update(values:Record<string,string>){const next=new URLSearchParams(query);Object.entries(values).forEach(([key,value])=>{if(value) next.set(key,value);else next.delete(key)});if(!('page' in values)) next.delete('page');router.push('/'+locale+'/shop'+(next.size?'?'+next.toString():''),{scroll:false});}
+ useEffect(()=>{
+  const controller=new AbortController();setLoading(true);setError(false);
+  async function load(){try{const next=new URLSearchParams(query);next.set('locale',locale);next.set('page',String(page));next.set('pageSize','12');const res=await fetch('/api/search?'+next.toString(),{signal:controller.signal});if(!res.ok) throw new Error('Search failed');const data=await res.json();if(controller.signal.aborted) return;setItems(data.items);setTotal(data.total);setDemo(data.demo);if(page>Math.max(1,Math.ceil(data.total/12))){next.delete('locale');next.delete('pageSize');next.set('page','1');router.replace('/'+locale+'/shop?'+next.toString(),{scroll:false});}}catch(e){if(!controller.signal.aborted){setError(true);setItems([])}}finally{if(!controller.signal.aborted)setLoading(false)}}
+  void load();return ()=>controller.abort();
+ },[query,page,locale,retry,router]);
+ const active=Boolean(category||q||minPrice||maxPrice||brand);const pages=Math.max(1,Math.ceil(total/12));
+ const title=category?categoryLabel(category,locale):(en?'A world of little discoveries':'Svet malih odkritij');
+ const filters=<><h2>{en?'Find your inspiration':'Poišči svoj navdih'}</h2><fieldset className="filter-group"><legend className="field-label">{en?'What interests them?':'Kaj jih zanima?'}</legend><label className="filter-option"><input type="radio" name="category" checked={!category} onChange={()=>update({category:''})}/>{en?'All products':'Vsi izdelki'}</label>{CATEGORIES.map(c=><label className="filter-option" key={c.id}><input type="radio" name="category" value={c.id} checked={category===c.id} onChange={()=>update({category:c.id})}/>{en?c.en:c.sl}</label>)}</fieldset><form className="filter-group" onSubmit={e=>{e.preventDefault();update({minPrice:min,maxPrice:max})}}><h3 className="field-label">{en?'Price range':'Okvirna cena'}</h3><div className="filter-prices"><label>{en?'From (€)':'Od (€)'}<input type="number" min="0" max="100000" step="0.01" value={min} onChange={e=>setMin(e.target.value)} placeholder="0"/></label><label>{en?'To (€)':'Do (€)'}<input type="number" min={min||'0'} max="100000" step="0.01" value={max} onChange={e=>setMax(e.target.value)} placeholder={en?'Any':'Vse'}/></label></div><button type="submit" className="secondary-btn" style={{width:'100%',marginTop:13,minHeight:40,padding:8}}>{en?'Apply price':'Uporabi ceno'}</button></form>{active&&<button type="button" className="text-link" onClick={()=>router.push('/'+locale+'/shop')}><RotateCcw size={14} style={{display:'inline',marginRight:6}}/>{en?'Reset all filters':'Počisti vse filtre'}</button>}</>;
+ return <div className="site-wrap"><div className="breadcrumb"><Link href={'/'+locale}>{en?'Home':'Domov'}</Link><span>/</span><span>{en?'Shop':'Trgovina'}</span>{category&&<><span>/</span><span>{title}</span></>}</div><section className="shop-intro"><div className="eyebrow">{en?'Play. Discover. Create.':'Igraj se. Raziskuj. Ustvarjaj.'}</div><h1 className="display-title">{title}</h1><p>{en?'From first colourful lines to little adventures. Explore by interest and price, and make room for a new idea.':'Od prvih pisanih črt do malih dogodivščin. Razišči po zanimanju in ceni ter odpri prostor novi ideji.'}</p></section><div className="catalog-layout"><aside className={'catalog-sidebar'+(filtersOpen?' is-open':'')} id="catalog-filters" aria-label={en?'Product filters':'Filtri izdelkov'}>{filters}</aside><section aria-label={en?'Products':'Izdelki'}><form onSubmit={e=>{e.preventDefault();update({q:search.trim()})}} style={{display:'flex',gap:9,marginBottom:20}}><label className="sr-only" htmlFor="catalog-search">{en?'Search collection':'Išči v katalogu'}</label><input id="catalog-search" className="styled-input" type="search" placeholder={en?'Search the little world …':'Poišči v našem malem svetu …'} value={search} onChange={e=>setSearch(e.target.value)}/><button className="primary-btn" type="submit" aria-label={en?'Search':'Poišči'} style={{padding:'10px 16px'}}><Search size={19}/></button></form><div className="catalog-toolbar"><button className="filter-toggle" type="button" aria-controls="catalog-filters" aria-expanded={filtersOpen} onClick={()=>setFiltersOpen(!filtersOpen)}><SlidersHorizontal size={16}/>{en?'Filters':'Filtri'}</button><span className="catalog-count" role="status">{loading?(en?'Finding inspiration…':'Iščemo navdih …'):error?'':productCount(total,locale)}</span><label><span className="sr-only">{en?'Sort products':'Razvrsti izdelke'}</span><select value={sort} className="styled-select" onChange={e=>update({sort:e.target.value})}><option value="newest">{en?'Newest first':'Najnovejše najprej'}</option><option value="price_asc">{en?'Price: low to high':'Cena: od nižje do višje'}</option><option value="price_desc">{en?'Price: high to low':'Cena: od višje do nižje'}</option></select></label></div>{active&&<div className="filter-tags">{[{key:'category',value:category,label:categoryLabel(category,locale)},{key:'q',value:q,label:'“'+q+'”'},{key:'minPrice',value:minPrice,label:(en?'From ':'Od ')+minPrice+' €'},{key:'maxPrice',value:maxPrice,label:(en?'Up to ':'Do ')+maxPrice+' €'},{key:'brand',value:brand,label:brand}].filter(f=>f.value).map(f=><button className="filter-tag" key={f.key} onClick={()=>update({[f.key]:''})} aria-label={(en?'Remove filter: ':'Odstrani filter: ')+f.label}>{f.label}<X size={13}/></button>)}</div>}<div aria-busy={loading}>{loading?<div className="product-grid catalog-products" aria-label={en?'Loading products':'Nalaganje izdelkov'}>{[0,1,2,3,4,5].map(i=><div className="skeleton" key={i}/>)}</div>:error?<div className="empty-state" role="alert"><h2>{en?'A little pause':'Majhen premor'}</h2><p>{en?'We could not load the collection. Please try again, or check the price range.':'Kataloga ni bilo mogoče naložiti. Poskusi znova ali preveri cenovni razpon.'}</p><button className="primary-btn" onClick={()=>setRetry(r=>r+1)}>{en?'Try again':'Poskusi znova'}</button></div>:items.length?<div className="product-grid catalog-products">{items.map(product=><ProductCard key={product.id} product={product} locale={locale}/>)}</div>:<div className="empty-state"><Search size={32} style={{margin:'auto'}}/><h2>{en?'Let’s try another idea':'Poskusimo še drugače'}</h2><p>{en?'No products match these filters. Try a broader search or reset the filters.':'Za ta izbor še ni izdelkov. Poskusi širše iskanje ali odstrani filtre.'}</p><button className="primary-btn" onClick={()=>router.push('/'+locale+'/shop')}>{en?'Show all products':'Pokaži vse izdelke'}</button></div>}</div>{demo&&!loading&&<p className="demo-note"><Info size={16}/>{en?'Demo products and illustrative images. Prices and availability are examples.':'Predstavitveni izdelki in ilustracije. Cene in dobavljivost so zgolj primeri.'}</p>}{!error&&!loading&&pages>1&&<nav className="pagination" aria-label={en?'Product pages':'Strani izdelkov'}><button disabled={page<=1} onClick={()=>update({page:String(page-1)})}>{en?'Previous':'Prejšnja'}</button><span>{page} / {pages}</span><button disabled={page>=pages} onClick={()=>update({page:String(page+1)})}>{en?'Next':'Naslednja'}</button></nav>}</section></div></div>;
 }
-
-

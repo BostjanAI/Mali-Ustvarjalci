@@ -1,59 +1,7 @@
 import Link from 'next/link';
-import { getTranslations } from 'next-intl/server';
-import { ArrowRight, Sparkles } from 'lucide-react';
-
-interface HeroProps {
-  locale: string;
-}
-
-export default async function Hero({ locale }: HeroProps) {
-  const t = await getTranslations('home.hero');
-
-  return (
-    <section className="relative overflow-hidden bg-gradient-to-br from-brand-50 via-white to-brand-100">
-      {/* Decorative blobs */}
-      <div
-        aria-hidden="true"
-        className="absolute -top-24 -right-24 w-96 h-96 rounded-full bg-brand-200 opacity-30 blur-3xl"
-      />
-      <div
-        aria-hidden="true"
-        className="absolute bottom-0 -left-16 w-72 h-72 rounded-full bg-brand-300 opacity-20 blur-3xl"
-      />
-
-      <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 sm:py-28 lg:py-36">
-        <div className="max-w-2xl">
-          {/* Badge */}
-          <div className="inline-flex items-center gap-2 bg-brand-100 text-brand-700 text-xs font-semibold px-3 py-1.5 rounded-full mb-6 uppercase tracking-wider">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Mali Ustvarjalci</span>
-          </div>
-
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 leading-tight tracking-tight">
-            {t('headline')}
-          </h1>
-
-          <p className="mt-6 text-lg sm:text-xl text-gray-600 leading-relaxed max-w-xl">
-            {t('subheadline')}
-          </p>
-
-          <div className="mt-10 flex flex-wrap gap-4">
-            <Link
-              href={`/${locale}/shop`}
-              className="inline-flex items-center gap-2 bg-brand text-white font-semibold px-7 py-3.5 rounded-full hover:bg-brand-600 active:bg-brand-700 transition-all shadow-sm hover:shadow-md no-underline text-base"
-            >
-              {t('cta')}
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-            <Link
-              href={`#categories`}
-              className="inline-flex items-center gap-2 bg-white text-brand border-2 border-brand font-semibold px-7 py-3.5 rounded-full hover:bg-brand-50 transition-all no-underline text-base"
-            >
-              {t('ctaSecondary')}
-            </Link>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
+import Image from 'next/image';
+import { Sparkles, ShoppingBag, Gift, Palette, Shapes, Heart, Sprout } from 'lucide-react';
+export default function Hero({ locale }: { locale: string }) {
+ const en=locale==='en';
+ return <section className="modern-hero"><div className="site-wrap"><div className="hero-stage"><div className="hero-content"><span className="hero-eyebrow"><Sparkles size={16}/>{en?'A little world of big ideas':'Mali svet velikih idej'}</span><h1>{en?<>Little hands.<br/><span>Big ideas.</span></>:<>Majhne roke.<br/><span>Velike ideje.</span></>}</h1><p>{en?'Less scrolling. More creating. Discover toys and creative materials that make room for their imagination.':'Manj zaslonov. Več domišljije. Odkrij igrače in ustvarjalne pripomočke za njihove največje male ideje.'}</p><div className="hero-cta"><Link href={'/'+locale+'/shop'} className="primary-btn"><ShoppingBag size={18}/>{en?'Let’s play':'Naj se igra začne'}</Link><Link href="#gift-finder" className="secondary-btn"><Gift size={18}/>{en?'Find a gift':'Poišči darilo'}</Link></div><div className="hero-interests"><Link href={'/'+locale+'/shop?category=art-craft'}><Palette size={16}/>{en?'Create':'Ustvarjaj'}</Link><Link href={'/'+locale+'/shop?category=wooden-toys'}><Shapes size={16}/>{en?'Discover':'Raziskuj'}</Link><a href="#play-together"><Heart size={16}/>{en?'Play together':'Igraj se skupaj'}</a></div></div><div className="hero-scene"><Image src="/images/play-hero.webp" alt={en?'A child exploring colourful wooden blocks through play':'Otrok med ustvarjalno igro s pisanimi lesenimi oblikami'} fill priority sizes="(max-width:760px) 100vw, 50vw"/><div className="scene-caption"><span className="caption-symbol"><Sparkles size={21}/></span><div><strong>{en?'Made for imagination.':'Prostor za domišljijo.'}</strong><span>{en?'One little discovery at a time.':'Eno malo odkritje za drugim.'}</span></div></div></div><div className="hero-orbit" aria-hidden="true"><svg viewBox="0 0 100 100"><path d="m50 0 8 18 18-9 1 20 20 1-9 18 18 8-18 8 9 18-20 1-1 20-18-9-8 18-8-18-18 9-1-20-20-1 9-18-18-8 18-8-9-18 20-1 1-20 18 9Z"/></svg><Sparkles size={34}/></div></div><div className="modern-values"><div><Palette/><span>{en?'Create in your own way':'Ustvarjanje po svoje'}</span></div><div><Sprout/><span>{en?'Let curiosity lead':'Radovednost na prvem mestu'}</span></div><div><Heart/><span>{en?'More moments together':'Več skupnih trenutkov'}</span></div></div></div></section>;
 }

@@ -116,6 +116,7 @@ function database() {
         if ('not' in value) return row[key] !== value.not;
         if ('gte' in value) return row[key] >= value.gte;
         if ('lt' in value) return row[key] < value.lt;
+        if ('lte' in value) return row[key] <= value.lte;
         return matches(row[key], value);
       }
       return row[key] instanceof Date && value instanceof Date
@@ -216,6 +217,7 @@ function database() {
             supplierOrderId: null,
             attempts: 0,
             lastAttemptAt: null,
+            nextAttemptAt: new Date(0),
             endpointUrl: null,
             ...copy(data),
           };
@@ -247,7 +249,7 @@ function database() {
       },
     };
   }
-  const prisma = {};
+  const prisma = { operationsAlert: { upsert: async () => ({}) } };
   for (const model of [
     'order',
     'product',
@@ -511,7 +513,7 @@ async function verify() {
       );
     },
   }).load('src/lib/supplierForward.ts').forwardOrderToSupplier;
-  await forward(db.state.orders[0].id);
+  await forward(db.state.orders[0].id, { force: true });
   check(
     'each supplier uses its own endpoint, dedicated key and only its own items',
     () => {
@@ -525,7 +527,7 @@ async function verify() {
       assert.equal(calls[1].url, 'https://supplier-b.invalid/orders');
     },
   );
-  await forward(db.state.orders[0].id);
+  await forward(db.state.orders[0].id, { force: true });
   check(
     'confirmed supplier dispatch is never resent on webhook replay or retry',
     () => assert.equal(calls.length, 2),
@@ -546,9 +548,9 @@ async function verify() {
         : new Response(JSON.stringify({ id: 'accepted' }));
     },
   }).load('src/lib/supplierForward.ts').forwardOrderToSupplier;
-  let result = await forward(db.state.orders[0].id);
+  let result = await forward(db.state.orders[0].id, { force: true });
   failing = false;
-  await forward(db.state.orders[0].id);
+  await forward(db.state.orders[0].id, { force: true });
   check(
     'transient failure keeps one dispatch and retries with identical reference and idempotency key',
     () => {
@@ -585,8 +587,8 @@ async function verify() {
       return new Response('{}');
     },
   }).load('src/lib/supplierForward.ts').forwardOrderToSupplier;
-  await forward(db.state.orders[0].id);
-  await forward(db.state.orders[0].id);
+  await forward(db.state.orders[0].id, { force: true });
+  await forward(db.state.orders[0].id, { force: true });
   check(
     'ambiguous success without supplier ID is held for review without blind retries',
     () => {
@@ -608,7 +610,7 @@ async function verify() {
       throw new Error('unexpected');
     },
   }).load('src/lib/supplierForward.ts').forwardOrderToSupplier;
-  await forward(db.state.orders[0].id);
+  await forward(db.state.orders[0].id, { force: true });
   check(
     'changing endpoint after an attempt requires review and cannot reroute customer data',
     () => {
@@ -656,7 +658,7 @@ async function verify() {
     },
   );
   db.state.orders[0].status = 'refunded';
-  await forward(db.state.orders[0].id);
+  await forward(db.state.orders[0].id, { force: true });
   check('refunded orders cannot be forwarded', () =>
     assert.equal(calls.length, 1),
   );

@@ -20,7 +20,9 @@
     "import:products": "tsx scripts/importProducts.ts",
     "verify:storefront": "node scripts/verify-storefront.cjs",
     "verify:catalog": "node scripts/verify-catalog.cjs",
-    "verify:dropshipping": "node scripts/verify-dropshipping.cjs"
+    "verify:dropshipping": "node scripts/verify-dropshipping.cjs",
+    "worker:fulfillment": "tsx scripts/fulfillmentWorker.ts",
+    "test:integration": "tsx scripts/verify-postgres.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

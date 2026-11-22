@@ -9,8 +9,20 @@ const schema = z.object({
   supplierOrderId: z.string().min(1).max(150),
   status: z.enum(['pending', 'confirmed', 'shipped', 'cancelled', 'refunded']),
   trackingNumber: z.string().trim().max(200).optional(),
+  labelUrl: z
+    .string()
+    .url()
+    .refine((v) => new URL(v).protocol === 'https:')
+    .optional(),
 });
 const transitions: Record<string, string[]> = {
+  awaiting_payment: [
+    'pending',
+    'confirmed',
+    'shipped',
+    'cancelled',
+    'refunded',
+  ],
   pending: ['confirmed', 'shipped', 'cancelled', 'refunded'],
   confirmed: ['shipped', 'cancelled', 'refunded'],
   shipped: ['refunded'],
@@ -58,18 +70,31 @@ export async function POST(req: Request) {
   if (!dispatch || dispatch.status !== 'sent')
     return new NextResponse('Not found', { status: 404 });
   const current = dispatch.supplierStatus || 'pending';
-  if (body.status === current || !transitions[current]?.includes(body.status))
+  const sameStatus = body.status === current;
+  const trackingChanged =
+    !!body.trackingNumber && body.trackingNumber !== dispatch.trackingNumber;
+  const labelChanged = !!body.labelUrl && body.labelUrl !== dispatch.labelUrl;
+  if (
+    (sameStatus && !trackingChanged && !labelChanged) ||
+    (!sameStatus && !transitions[current]?.includes(body.status))
+  )
     return NextResponse.json({ received: true });
   const updated = await prisma.supplierDispatch.updateMany({
-    where: { id: dispatch.id, supplierStatus: dispatch.supplierStatus },
+    where: {
+      id: dispatch.id,
+      supplierStatus: dispatch.supplierStatus,
+      trackingNumber: dispatch.trackingNumber,
+      labelUrl: dispatch.labelUrl,
+    },
     data: {
       supplierStatus: body.status,
+      ...(body.labelUrl ? { labelUrl: body.labelUrl } : {}),
       ...(body.trackingNumber ? { trackingNumber: body.trackingNumber } : {}),
     },
   });
   if (updated.count) {
     await refreshSupplierStatus(dispatch.orderId);
-    if (body.status === 'shipped')
+    if (body.status === 'shipped' && (!sameStatus || trackingChanged))
       await sendShippingUpdate(
         dispatch.order.email,
         dispatch.orderId,

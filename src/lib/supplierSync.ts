@@ -63,10 +63,7 @@ export async function applySupplierItems(
             },
           },
         });
-        if (existing && !existing.supplierManaged) {
-          result.skipped++;
-          continue;
-        }
+        const contentManaged = !existing || existing.supplierManaged;
         const now = new Date();
         const imagesJson = JSON.stringify(item.images);
         const detailsJson = JSON.stringify(item.details);
@@ -83,9 +80,10 @@ export async function applySupplierItems(
             existing.detailsJson !== detailsJson ||
             existing.brand !== (item.brand || null));
         const needsReview =
-          !existing || imagesChanged || contentChanged || !item.category;
+          contentManaged &&
+          (!existing || imagesChanged || contentChanged || !item.category);
         const inventory =
-          item.quantity === undefined
+          item.quantity === undefined || existing?.stockManaged === false
             ? undefined
             : {
                 upsert: {
@@ -102,18 +100,32 @@ export async function applySupplierItems(
                 },
               };
         const data = {
-          title: item.title,
-          description: item.description || null,
-          priceCents: Math.round(item.price * 100),
-          currency: item.currency,
-          brand: item.brand || null,
-          categoryPath: item.category,
-          supplierCategoryPath: item.rawCategory || null,
-          detailsJson,
-          imagesJson,
           lastSyncedAt: now,
-          ...(needsReview ? { active: false, catalogReviewedAt: null } : {}),
-          ...(imagesChanged ? { imagesVerifiedAt: null } : {}),
+          supplierPriceCents: Math.round(item.price * 100),
+          ...(item.costPrice !== undefined
+            ? { costPriceCents: Math.round(item.costPrice * 100) }
+            : {}),
+          ...(!existing || existing.priceManaged
+            ? {
+                priceCents: Math.round(item.price * 100),
+                currency: item.currency,
+              }
+            : {}),
+          ...(contentManaged
+            ? {
+                title: item.title,
+                description: item.description || null,
+                brand: item.brand || null,
+                categoryPath: item.category,
+                supplierCategoryPath: item.rawCategory || null,
+                detailsJson,
+                imagesJson,
+                ...(needsReview
+                  ? { active: false, catalogReviewedAt: null }
+                  : {}),
+                ...(imagesChanged ? { imagesVerifiedAt: null } : {}),
+              }
+            : {}),
           ...(inventory ? { inventory } : {}),
         };
         if (existing) {
@@ -124,6 +136,9 @@ export async function applySupplierItems(
           await tx.product.create({
             data: {
               ...data,
+              title: item.title,
+              priceCents: Math.round(item.price * 100),
+              currency: item.currency,
               active: false,
               supplierId,
               supplierProductId: item.id,
@@ -185,12 +200,16 @@ export async function applySupplierItems(
   );
   return result;
 }
-function due(last: Date | null, frequency: string | null) {
+export function isSupplierSyncDue(last: Date | null, frequency: string | null) {
   return (
     !last ||
-    (frequency !== '@daily' && frequency !== '@hourly') ||
+    !['@15min', '@daily', '@hourly'].includes(frequency || '') ||
     Date.now() - last.getTime() >=
-      (frequency === '@hourly' ? 3600000 : 86400000)
+      (frequency === '@15min'
+        ? 900000
+        : frequency === '@hourly'
+          ? 3600000
+          : 86400000)
   );
 }
 export async function runSupplierSync() {
@@ -214,7 +233,7 @@ export async function runSupplierSync() {
         id: 'environment-supplier',
         name,
         feedUrl: url,
-        syncFrequency: '@daily',
+        syncFrequency: '@15min',
       },
       update: { name, feedUrl: url },
     });
@@ -226,7 +245,7 @@ export async function runSupplierSync() {
   for (const supplier of suppliers) {
     if (
       !supplier.feedUrl ||
-      !due(supplier.lastSyncedAt, supplier.syncFrequency)
+      !isSupplierSyncDue(supplier.lastSyncedAt, supplier.syncFrequency)
     ) {
       total.skipped++;
       continue;

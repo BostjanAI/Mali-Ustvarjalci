@@ -41,7 +41,7 @@ Novi izdelki se uvozijo kot osnutki. Na /sl/admin/products preveri kategorijo, d
 
 Ob spremembi opisov, kategorije ali varnostnih podatkov se izdelek vrne v pregled. Spremenjene slike ali vir pravic prekličejo tudi potrditev slik. SUPPLIER_IMAGE_HOSTS mora vključevati dogovorjene domene slik; sprememba zahteva novo gradnjo. Ne vnašaj splošnih nadomestnih opozoril, izmišljene starosti ali nepreverjenih navodil.
 
-Zaloga ima čas potrditve. Starejša od stockMaxAgeHours (privzeto 24 ur) se obravnava kot neznana; takšnega izdelka ni mogoče dodati v košarico ali plačati. Pogostost uskladi z dejanskimi jamstvi dobavitelja in režimom prodaje. Tehnični podatek ne rezervira zaloge pri dobavitelju; pred prodajo je potreben dogovor o rezervacijah in dobavljivosti.
+Zaloga ima čas potrditve. Starejša od stockMaxAgeHours (privzeto 1 ura) se obravnava kot neznana; takšnega izdelka ni mogoče dodati v košarico ali plačati. Pogostost uskladi z dejanskimi jamstvi dobavitelja in režimom prodaje. Lokalna rezervacija pred plačilom in obveznosti po prodaji se vodijo ločeno od sveže količine vira. To ne pomeni rezervacije pri dobavitelju; glej docs/DROPSHIPPING.md.
 
 ## 5. Prehod baze in zagon
 
@@ -52,3 +52,7 @@ Nato v dogovorjenem okolju izvedi npx prisma migrate deploy in npx prisma genera
 Preverjanje: npm run verify:catalog, npm run verify:storefront, npm run typecheck in npm run build. Ti preizkusi preverjajo programsko vedenje, ne resničnosti dobaviteljevih trditev.
 
 Viri za poslovni pregled: https://spot.gov.si/sl/teme/spletna-prodaja/ in https://www.gov.si/teme/varnost-igrac/ .
+
+## Ločeni načini posodabljanja
+
+supplierManaged določa posodabljanje vsebine. stockManaged določa osveževanje zaloge in je neodvisen od vsebine. priceManaged izrecno dovoli spreminjanje prodajne cene; privzeto je izključen za obstoječe izdelke. supplierPriceCents hrani ceno iz vira, costPriceCents pa ločeno nabavno ceno iz polja costPrice. Nabavna cena ne postane prodajna samodejno. Urejene opise zaščiti z izklopom supplierManaged; zaloga se še naprej osvežuje.

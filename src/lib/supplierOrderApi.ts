@@ -20,6 +20,9 @@ export const supplierRequestSchema = z.object({
   orderId: z.string().min(1),
   contact: z.object({ email: z.string().email(), phone: z.string().min(1) }),
   shippingAddress: shippingAddressSchema,
+  shippingService: z
+    .object({ code: z.string().min(1), paymentMethod: z.string().optional() })
+    .optional(),
   items: z
     .array(
       z.object({

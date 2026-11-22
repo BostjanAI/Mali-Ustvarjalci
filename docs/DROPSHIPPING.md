@@ -1,50 +1,59 @@
-# Dostava in posredovanje naročil
+# Izpolnjevanje naročil in Ikonka
 
-## Kaj se shrani
+## Stanje
 
-Plačano naročilo vsebuje stripeCheckoutSessionId, status paid, dostavni naslov v shippingAddressJson (ime, vrstica 1, vrstica 2, kraj, poštna številka, regija, država, telefon) ter dobaviteljeve reference na postavkah. Naslov iz shipping_details zaključene Stripe seje ima prednost pred podatki obrazca; obračunski naslov se ne uporabi za dostavo. Če dostavni podatki manjkajo ali so neveljavni, plačano naročilo ostane zadržano za ročni pregled.
+Implementirani so naslov in dobaviteljske reference na naročilu, lokalna rezervacija pred plačilom, ločene pošiljke, trajni ponovni poskusi, skrbniška vračila z idempotentno referenco in ločena uskladitev dobavitelja. Dodan je namenski adapter Ikonka ordersAPI 0.9.0 iz uradne specifikacije: https://orders-api.ikonka.eu/docs/pl in https://orders-api.ikonka.eu/openapi-pl.json .
 
-Enolični ID seje in transakcija preprečita ponovljen vnos naročila in ponovljeno zmanjšanje zaloge ob podvojenih ali sočasnih obvestilih. Ob pomanjkanju zaloge naročilo ostane plačano, vendar se ne posreduje samodejno. Stari podatki se ne dopolnjujejo z ugibanjem; stare seje brez dobaviteljskega posnetka zahtevajo ročni pregled. Ponovitev starega PaymentIntent ne ustvari novega naročila.
+Povezava še ni preizkušena z dejanskim uporabniškim računom Ikonka. Pravi feed, preslikave, poslovni podatki, dovoljenja za slike in dejanski katalog ostajajo odvisni od vnesenih podatkov. V razvoju ostaja demonstracijski način. Nobeno resnično naročilo ali vračilo ni bilo izvedeno med programskimi preizkusi.
 
-Obvestila checkout.session.completed in checkout.session.async_payment_succeeded uporabljajo isti postopek. Neporavnana plačila ne sprožijo naročila. Seja s potrjenim zneskom 0 se lahko izpolni tudi s statusom no_payment_required. Webhook ponovno pridobi sejo prek pripete različice API 2024-06-20. V Stripe nastavi oba dogodka na obstoječo pot /api/stripe-webhook.
+## Migracije in CI
 
-## Nastavitev dobavitelja
+Pripravljeni sta migraciji 20261122020000_operations in 20261122021000_stock_safeguards. Pred produkcijskim prehodom naredi varnostno kopijo in v dogovorjenem okolju izvedi npx prisma migrate deploy, npx prisma generate ter novo gradnjo. Migracija ne izmisli dostavnih naslovov starih naročil. Obstoječi dnevni ali prazni interval dobaviteljev preide na @15min. Posredovanje ostane izklopljeno, dokler ga skrbnik ne vklopi.
 
-Na /sl/admin/suppliers ima vsak dobavitelj svoj apiUrl, orderAuthToken, orderWebhookToken in orderForwardingEnabled. Ključ kataloga authToken je ločen. Shranjeni ključi se ne izpisujejo v obrazec. Globalna SUPPLIER_ORDER_URL in SUPPLIER_API_KEY se za naročila ne uporabljata več. Obstoječi dobavitelji imajo posredovanje privzeto izključeno.
+CI uporablja izoliran PostgreSQL 16, izvede vse migracije, Jest z JSX, PostgreSQL integracijske preizkuse, regresijske preizkuse kataloga/plačil, gradnjo in Playwright. Enotski testi ne uporabljajo baze. Integracijski skript zahteva izrecen TEST_DATABASE_URL z imenom baze, ki se konča z _test. Ne uporabljaj produkcijske baze za teste.
 
-Pred vklopom je treba potrditi in preizkusiti dejansko dobaviteljevo pogodbo API. Vgrajen je izrecen generični protokol v1, ne univerzalni adapter za poljubnega dobavitelja. Če dobavitelj uporablja drugo obliko podatkov ali avtentikacije, je treba prilagoditi adapter. URL mora biti HTTPS brez prijavnih podatkov ali ključev v poizvedbi; preusmeritve se ne sledijo.
+## Zaloga in rezervacije
 
-## Pogodba naročil v1
+Inventory.quantity je zadnja potrjena količina vira. allocatedQuantity zajema odprte rezervacije in prodane količine, ki jih vir še ni dokazano vključil. Kupcu je na voljo največ quantity - allocatedQuantity; negativna razlika pomeni 0. Pogoj svežine je privzeto ena ura.
 
-POST na apiUrl uporablja Content-Type application/json, Authorization Bearer z ločenim orderAuthToken in Idempotency-Key z ID-jem SupplierDispatch. Telo ima:
+Pred Stripe sejo se izdelki zaklenejo v stalnem vrstnem redu in rezervirajo v eni transakciji PostgreSQL. Dva kupca ne moreta lokalno rezervirati zadnjega kosa. Uspešno plačilo pretvori rezervacijo v obveznost; ne zmanjša zaloge drugič. Ponovitev dogodka ima enolični ID seje.
 
-- version: 1
-- reference: ID posredovanja (stalna enolična referenca)
-- orderId: ID naročila trgovine
-- contact: email in phone
-- shippingAddress: name, line1, line2, city, postalCode, state, country, phone
-- items: samo supplierProductId in quantity za tega dobavitelja
+Rezervacija traja 35 minut, vendar se ne sprosti samo zaradi pretečenega lokalnega časa. Izvajalec preveri/izteče dejansko Stripe sejo. Nejasen izid ustvarjanja seje se obnovi z isto Stripe idempotentno referenco; nejasnosti ostanejo v opozorilih. Novi checkout uporablja kartična plačila, da lokalna rezervacija ne poteče med večdnevnim plačilom.
 
-Dobavitelj mora reference/Idempotency-Key trajno deduplicirati in pri ponovitvi vrniti isto zunanje naročilo. Uspešen odgovor je HTTP 2xx z JSON objektom, ki vsebuje neprazen id (niz ali število; največ 150 znakov). Dobavitelj ne prejme celotnega zneska košarice ali izdelkov drugih dobaviteljev.
+Sinhronizacija lahko posodobi fizično količino vira, ne izbriše pa rezervacij. Po prodaji se obveznost upošteva, dokler skrbnik na podlagi svežega vira in dokazila ne potrdi, da vir vključuje naročilo. To je konservativno in lahko začasno zmanjša prodajno količino; prepreči ponovno prodajo istih lokalnih kosov ob osvežitvi vira. Ikonkin checkOnly ni oddaljena rezervacija. Razpoložljivost pri dobavitelju se lahko med preverjanjem in oddajo spremeni; zavrnitev gre v ročno obravnavo/vračilo.
 
-Zapis SupplierDispatch nastane v isti transakciji kot plačano naročilo in vsebuje nespremenljiv posnetek zahtevka. Različni dobavitelji imajo ločene zunanje ID-je in statuse. Začasna napaka ali prekinjena povezava ohrani zapis; ponovitev uporabi isto referenco in telo. Potrjeno posredovanje se ne pošilja ponovno. Sprememba naslova API po poskusu zahteva pregled. Uspeh brez veljavnega zunanjega ID-ja ali trajna napaka 4xx zahteva ročno razrešitev.
+## Nastavitev Ikonke
 
-## Ponovni poskusi in pregled
+Na /sl/admin/suppliers izberi adapter ikonka in točen endpoint https://orders-api.ikonka.eu/v1/orders. Vnesi e-pošto računa v orderApiUsername ter geslo B2B računa v ločen orderAuthToken. Ključ kataloga authToken se za naročila ne uporablja. Gesla se ne izpisujejo nazaj v HTML. Omogoči dropshipping pri dobavitelju in preveri valuto računa EUR ter komercialne pogoje plačila.
 
-Na /sl/admin/orders sta vidna shranjeni dostavni naslov in stanje vsakega dobavitelja. Skrbnik lahko ponovno sproži posredovanje; potrjene pošiljke se preskočijo. Naročila z fulfillmentHold ali brez potrjenih naslovov/reference se ne posredujejo. Razrešitev zadržanega naročila je poslovni postopek; v tej različici ni obrazca za popravljanje že potrjenih naročil in samodejnega odpravljanja zadržanj.
+Pred vklopom preveri dovoljene dostave in plačila z npx tsx scripts/checkIkonka.ts --supplier ID. To je branje /v1/catalog, brez oddaje naročila. Potrjene dostave v shippingServicesJson so JSON polje objektov s code, label, countries (SI/AT/DE/HR/IT), chargeCents (znesek dostave za kupca v EUR) in paymentMethod (bank_transfer ali bank_transfer_dropshipping). chargeCents je trgovčeva potrjena cena dostave, ne avtomatično prepisana dobaviteljeva nabavna cena. Izbere se prva potrjena storitev za državo vsakega dobavitelja; stroški mešane košarice seštejejo posamezne pošiljke.
 
-Za začasno napako API vrne Stripe webhook 503, zato lahko Stripe obvestilo ponovi. Sočasni poskusi imajo dvominutno časovno rezervacijo; zahtevek ima 15-sekundno omejitev. Mehanizem ne jamči odsotnosti dvojnikov pri partnerju, ki ne podpira trajne deduplikacije. Po izteku Stripe ponovitev je potreben skrbniški pregled in ročni ponovni poskus. Samostojen razporejevalnik ni vključen.
+Podprti so kurirski načini dpd_courier, gls_courier, inpost_courier in pallet_raben, kadar jih račun/dejanski checkOnly dopušča. Adapter pred ustvarjanjem plačila uporabi checkOnly:true s konkretnimi izdelki, količinami, naslovom in storitvijo. Neuspešno preverjanje ne ustvari plačila. Fiksna hitra dostava je odstranjena. Ista izbrana storitev je posneta pri rezervaciji/naročilu in prenesena dobavitelju.
 
-## Povratna obvestila
+Naslov za Ikonko vsebuje izrecno ime, priimek, ime ulice, hišno številko in stanovanje. Hišne številke se ne ugiba iz prostega besedila. Država se preslika na ISO3 (SI -> SVN itd.). externalId je stalni ID SupplierDispatch; pri ponovitvah se ne spremeni. Adapter pošlje HTTP Basic in izrecno obravnava 202/409/429 ter Retry-After. Zahtevki računa so omejeni s trajno časovno rezervacijo vsaj 37 sekund, da ne presegajo dokumentiranih omejitev 6/minuto in 100/uro.
 
-POST /api/supplier-webhook zahteva x-supplier-id (ID dobavitelja iz trgovine) in x-api-key (njegov orderWebhookToken). Telo vsebuje supplierOrderId, status (pending, confirmed, shipped, cancelled ali refunded) in neobvezni trackingNumber. Iskanje je omejeno na dobavitelja in njegov zunanji ID naročila. Podvojena/starejša obvestila ne vrnejo statusa nazaj in ne ponovijo obvestila o odpremi. Povratni status refunded ne izvede finančnega vračila v Stripe.
+Odgovor awaiting_payment pri Ikonki pomeni potrebno ureditev plačila dobavitelju, ne potrjene odpreme; nastane operativno opozorilo. Ta koda ne plačuje računa pri Ikonki. Izvajalec pridobiva naknadne sledilne številke prek /v1/orders/tracking. Sama številka ne pomeni, da je bila pošiljka dokazano odpremljena.
 
-Ključe in naslove hrani ustrezno varovane v okolju/bazi, naslove kupcev pa obravnavaj kot osebne podatke. Dnevniki napak ne vsebujejo dostavnih podatkov, ključev ali surovih odgovorov dobavitelja.
+Lastni prevoz z nalepkami (own_*) ni ponujen za samodejni nakup. Zanj je potreben še dogovorjen prevozniški račun in ustvarjanje A6 PDF; uradni API pri takih storitvah zahteva trackingNumber in pdfBase64. Teh podatkov ne izmišljamo. Dobaviteljeve že prejete HTTPS nalepke se lahko shranijo s povratnim obvestilom in odprejo pri naročilu.
 
-## Migracija in preverjanje
+## Izvajalec in opozorila
 
-Migracija prisma/migrations/20261122010000_order_delivery_dispatch je pripravljena. Pred uporabo sledi varnostna kopija baze in npx prisma migrate deploy v pravilnem okolju. Sledi npx prisma generate in nova gradnja. Migracija ne izmisli naslovov ali dobaviteljev za stara naročila ter ne vklopi dejanskega posredovanja. Starih že posredovanih naročil ne pošiljaj ponovno brez preverjanja pri dobavitelju.
+POST /api/admin/fulfillment-worker zahteva skrbniško sejo ali glavo x-cron-secret, ki se ujema s CRON_SECRET. Izvajalec pobere zapadle pošiljke, obnovi/izteče rezervacije, preveri čakajoča Stripe vračila in pridobi sledenje Ikonke. Pošiljke imajo nextAttemptAt, časovno rezervacijo poskusa, naraščajoče zamike 1, 2, 4 ... minut (največ 6 ur) in največ 8 poskusov. Retry-After dobavitelja ima prednost. Nejasen uspeh ali trajna zavrnitev zahteva ročni pregled; ne sledi slepo ponavljanje.
 
-Preizkusi: npm run verify:dropshipping, npm run verify:storefront, npm run verify:catalog, npm run typecheck, npm run lint in npm run build. Regresijski preizkusi uporabljajo navidezno transakcijsko bazo in navidezne dobavitelje; pred produkcijo je še potreben integracijski preizkus na migrirani testni bazi ter v dobaviteljevem testnem okolju.
+GitHub workflow fulfillment.yml ima urnik na pet minut. Za dejansko aktivacijo je treba nastaviti skrivnosti FULFILLMENT_ENDPOINT_URL (objavljena HTTPS pot izvajalca) in CRON_SECRET. Brez tega workflow ne kliče nobene storitve. GitHub urnik ni jamstvo točnega časa. Na strežniku je mogoče uporabiti tudi npm run worker:fulfillment -- --apply z lastnim razporejevalnikom. Sinhronizacija vira ima ločen petnajstminutni workflow in SYNC_ENDPOINT_URL. Lokalni localhost ni cilj produkcijskega razporejevalnika.
 
-Podlaga za Stripe tok: https://docs.stripe.com/checkout/fulfillment in https://docs.stripe.com/api/checkout/sessions/object?api-version=2024-06-20 .
+Opozorila so trajno shranjena v OperationsAlert in vidna na /sl/admin/orders, z možnostjo označitve pregleda. Ne vsebujejo naslovov, gesel ali surovih odgovorov dobavitelja. Stripe webhook zapisuje v trajno vrsto in ne čaka več na dobavitelja.
+
+## Vračila in uskladitev
+
+Skrbniški gumb kliče skupno storitev v isti preverjeni prijavni seji; ni notranjega HTTP klica brez piškotka. API ima enako storitev po lastnem preverjanju skrbnika. Vsaka zahteva ima UUID requestId in trajen RefundOperation; ponavljanje iste reference uporabi isti Stripe idempotencyKey. Zneski so pozitivni celi centi in ne smejo presegati preostalega plačila. Nejasen izid se zadrži za pregled.
+
+Vračilo denarja nikoli samo ne poveča zaloge. Naročilo se zadrži za uskladitev z dobaviteljem. Na naročilu skrbnik z dokazilom ločeno zabeleži potrditev preklica ali prejema vračila. Fizična količina še vedno izvira iz potrjenega vira. Samodejni preklic/prevzem vračil pri Ikonki v javni specifikaciji ni opisan in ostaja poslovni postopek z dobaviteljem.
+
+Na /sl/admin/orders je vmesnik za popravek naslova pred prvim poskusom in za dokazano ročno izpolnitev. Popravek naslova ne odpravi drugih zadržanj. Pri nedobavljivosti izberi vračilo denarja; ne odstranjuj zadržanja brez poslovne razrešitve. Po že opravljenem poskusu se naročilo ne preusmerja na nov endpoint.
+
+Za posodobitve vračil v Stripe nastavi refund.created, refund.updated in refund.failed poleg checkout.session.completed, checkout.session.async_payment_succeeded, checkout.session.expired in checkout.session.async_payment_failed.
+
+## Preizkusi
+
+npm test -- --ci --runInBand; npm run test:integration (izrecen TEST_DATABASE_URL); npm run verify:catalog; npm run verify:storefront; npm run verify:dropshipping; npm run typecheck; npm run lint; npm run build; npm run e2e. E2E sam zažene zgrajen demonstracijski strežnik in ga po preverjanju ustavi. Integracijski testi imajo navidezni Stripe in navideznega dobavitelja; ne premikajo resničnega denarja.

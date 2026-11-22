@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/requireAdmin';
 import { runSupplierSync } from '@/lib/supplierSync';
 import { validOrderEndpoint } from '@/lib/supplierOrderApi';
+import { shippingServicesSchema } from '@/lib/shippingServices';
 const formSchema = z.object({
   name: z.string().trim().min(1).max(250),
   feedUrl: z
@@ -14,7 +15,7 @@ const formSchema = z.object({
       const url = new URL(value);
       return url.protocol === 'https:' && !url.username && !url.password;
     }),
-  frequency: z.enum(['@hourly', '@daily']),
+  frequency: z.enum(['@15min', '@hourly', '@daily']),
 });
 const value = (f: FormData, key: string) => String(f.get(key) || '').trim();
 const locale = (f: FormData) => (f.get('locale') === 'en' ? 'en' : 'sl');
@@ -26,7 +27,7 @@ async function saveSupplier(form: FormData) {
   const parsed = formSchema.safeParse({
     name: value(form, 'name'),
     feedUrl: value(form, 'feedUrl'),
-    frequency: value(form, 'syncFrequency') || '@daily',
+    frequency: value(form, 'syncFrequency') || '@15min',
   });
   if (!parsed.success) redirect(target + '?notice=invalid');
   const id = value(form, 'id');
@@ -52,11 +53,32 @@ async function saveSupplier(form: FormData) {
     (orderForwardingEnabled && (!apiUrl || !finalOrderToken))
   )
     redirect(target + '?notice=order-api-invalid');
+  const orderAdapter =
+    value(form, 'orderAdapter') === 'ikonka' ? 'ikonka' : 'generic-v1';
+  const orderApiUsername =
+    value(form, 'orderApiUsername') || previous?.orderApiUsername || null;
+  let shippingServicesJson = value(form, 'shippingServicesJson');
+  try {
+    shippingServicesJson = JSON.stringify(
+      shippingServicesSchema.parse(JSON.parse(shippingServicesJson || '[]')),
+    );
+  } catch {
+    redirect(target + '?notice=order-api-invalid');
+  }
+  if (
+    orderForwardingEnabled &&
+    orderAdapter === 'ikonka' &&
+    (!orderApiUsername || apiUrl !== 'https://orders-api.ikonka.eu/v1/orders')
+  )
+    redirect(target + '?notice=order-api-invalid');
   const data = {
     name: parsed.data.name,
     feedUrl: parsed.data.feedUrl,
     syncFrequency: parsed.data.frequency,
     active,
+    orderAdapter,
+    orderApiUsername,
+    shippingServicesJson,
     apiUrl: apiUrl || null,
     orderAuthToken: finalOrderToken,
     orderWebhookToken: finalWebhookToken,
@@ -159,7 +181,10 @@ export default async function SuppliersPage({
             </label>
             <label>
               {en ? 'Frequency' : 'Pogostost'}
-              <select name="syncFrequency" defaultValue="@daily">
+              <select name="syncFrequency" defaultValue="@15min">
+                <option value="@15min">
+                  {en ? 'Every 15 minutes' : 'Vsakih 15 minut'}
+                </option>
                 <option value="@hourly">{en ? 'Hourly' : 'Vsako uro'}</option>
                 <option value="@daily">{en ? 'Daily' : 'Dnevno'}</option>
               </select>
@@ -224,8 +249,11 @@ export default async function SuppliersPage({
                 {en ? 'Frequency' : 'Pogostost'}
                 <select
                   name="syncFrequency"
-                  defaultValue={s.syncFrequency || '@daily'}
+                  defaultValue={s.syncFrequency || '@15min'}
                 >
+                  <option value="@15min">
+                    {en ? 'Every 15 minutes' : 'Vsakih 15 minut'}
+                  </option>
                   <option value="@hourly">{en ? 'Hourly' : 'Vsako uro'}</option>
                   <option value="@daily">{en ? 'Daily' : 'Dnevno'}</option>
                 </select>
@@ -235,6 +263,9 @@ export default async function SuppliersPage({
               en={en}
               endpoint={s.apiUrl}
               enabled={s.orderForwardingEnabled}
+              adapter={s.orderAdapter}
+              username={s.orderApiUsername}
+              services={s.shippingServicesJson}
             />
             <label className="admin-check">
               <input name="active" type="checkbox" defaultChecked={s.active} />
@@ -256,10 +287,16 @@ function OrderApiFields({
   en,
   endpoint,
   enabled = false,
+  adapter,
+  username,
+  services,
 }: {
   en: boolean;
   endpoint?: string | null;
   enabled?: boolean;
+  adapter?: string;
+  username?: string | null;
+  services?: string | null;
 }) {
   return (
     <fieldset className="space-y-4 mt-6">
@@ -268,8 +305,34 @@ function OrderApiFields({
       </legend>
       <p className="admin-meta">
         {en
-          ? 'Enable only after testing the v1 order contract and durable Idempotency-Key support with this supplier. Feed credentials are separate.'
-          : 'Vklopi po preizkusu pogodbe naročil v1 in trajnega preprečevanja dvojnih naročil z Idempotency-Key pri tem dobavitelju. Ključ kataloga je ločen.'}
+          ? 'Enable only after testing the selected order protocol and durable Idempotency-Key support with this supplier. Feed credentials are separate.'
+          : 'Vklopi po preizkusu izbranega protokola naročil in trajnega preprečevanja dvojnih naročil z Idempotency-Key pri tem dobavitelju. Ključ kataloga je ločen.'}
+      </p>
+      <label>
+        {en ? 'Order adapter' : 'Adapter naročil'}
+        <select name="orderAdapter" defaultValue={adapter || 'generic-v1'}>
+          <option value="generic-v1">Generic v1</option>
+          <option value="ikonka">Ikonka ordersAPI 0.9</option>
+        </select>
+      </label>
+      <label>
+        {en ? 'Ikonka account email' : 'E-pošta računa Ikonka'}
+        <input
+          name="orderApiUsername"
+          type="email"
+          defaultValue={username || ''}
+        />
+      </label>
+      <label>
+        {en
+          ? 'Confirmed delivery services (JSON)'
+          : 'Potrjene dostavne storitve (JSON)'}
+        <textarea name="shippingServicesJson" defaultValue={services || '[]'} />
+      </label>
+      <p className="admin-meta">
+        {en
+          ? 'Use account-confirmed service code, label, destination countries, chargeCents and Ikonka paymentMethod. Carrier-label services are not offered until their label workflow is integrated.'
+          : 'Vnesi s svojim računom potrjene code, label, countries, chargeCents in za Ikonko paymentMethod. Lastni prevoz z nalepko še ni na voljo za samodejni nakup.'}
       </p>
       <div className="admin-grid">
         <label>
@@ -318,8 +381,8 @@ function OrderApiFields({
           defaultChecked={enabled}
         />
         {en
-          ? 'Enable forwarding; the supplier supports the tested v1 contract and stable idempotency keys.'
-          : 'Omogoči posredovanje; dobavitelj podpira preizkušeno pogodbo v1 in stalne ključe za preprečevanje podvojenih naročil.'}
+          ? 'Enable forwarding; the supplier supports the tested selected protocol and stable idempotency keys.'
+          : 'Omogoči posredovanje; dobavitelj podpira preizkušen izbrani protokol in stalne ključe za preprečevanje podvojenih naročil.'}
       </label>
     </fieldset>
   );

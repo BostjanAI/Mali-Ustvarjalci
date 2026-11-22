@@ -1,15 +1,16 @@
 import { MetadataRoute } from 'next';
 import { prisma } from '@/lib/prisma';
+import { publishedProducts } from '@/lib/catalogProduct';
 
 export const dynamic = 'force-dynamic';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = process.env.NEXTAUTH_URL || 'https://www.mali-ustvarjalci.si';
   const locales = ['sl', 'en'];
-  
-  const products = await prisma.product.findMany({ 
-    where: { active: true }, 
-    select: { slug: true, categoryPath: true, updatedAt: true } 
+
+  const products = await prisma.product.findMany({
+    where: publishedProducts,
+    select: { slug: true, categoryPath: true, updatedAt: true },
   });
 
   const sitemap: MetadataRoute.Sitemap = [];
@@ -28,7 +29,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'daily',
       priority: 0.9,
     });
-    
+
     sitemap.push({
       url: `${base}/${loc}/shop`,
       lastModified: new Date(),
@@ -37,7 +38,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     });
   }
 
-  const categories = Array.from(new Set(products.map((p) => p.categoryPath).filter(Boolean) as string[]));
+  const categories = Array.from(
+    new Set(products.map((p) => p.categoryPath).filter(Boolean) as string[]),
+  );
   for (const c of categories) {
     const enc = encodeURIComponent(c);
     for (const loc of locales) {

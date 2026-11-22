@@ -1,5 +1,5 @@
 {
-  "stockMaxAgeHours": 24,
+  "stockMaxAgeHours": 1,
   "deactivateMissing": false,
   "suppliers": {}
 }

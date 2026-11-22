@@ -1,3 +1,6 @@
+jest.mock('@/lib/prisma', () => ({
+  prisma: { product: { findMany: jest.fn().mockResolvedValue([]) } },
+}));
 import sitemap from '@/app/sitemap';
 
 describe('sitemap', () => {
@@ -5,8 +8,6 @@ describe('sitemap', () => {
     const entries = await sitemap();
     expect(entries).toBeDefined();
     expect(entries.length).toBeGreaterThan(0);
-    expect(entries.some(e => e.url.includes('/shop'))).toBe(true);
+    expect(entries.some((e) => e.url.includes('/shop'))).toBe(true);
   });
 });
-
-

@@ -70,6 +70,10 @@ model Supplier {
   orderAuthToken String?
   orderWebhookToken String?
   orderForwardingEnabled Boolean @default(false)
+  shippingServicesJson String?
+  orderAdapter String @default("generic-v1")
+  orderApiUsername String?
+  orderApiNextAt DateTime?
   syncFrequency String? // cron-like string or enum
   active        Boolean @default(true)
   feedUrl       String?
@@ -103,6 +107,10 @@ model Product {
   supplierProductId String?
   lastSyncedAt      DateTime?
   supplierManaged   Boolean   @default(true)
+  stockManaged Boolean @default(true)
+  priceManaged Boolean @default(false)
+  costPriceCents Int?
+  supplierPriceCents Int?
 
   brand        String?
   categoryPath String?
@@ -136,6 +144,7 @@ model Inventory {
   id              String @id @default(cuid())
   productId       String @unique
   quantity        Int    @default(0)
+  allocatedQuantity Int @default(0)
   lastSupplierQty Int?
   syncedAt DateTime?
 
@@ -151,6 +160,9 @@ model Order {
   vatRate               Int     @default(22)
   stripeCheckoutSessionId String? @unique
   shippingAddressJson String?
+  shippingServiceJson String?
+  reservationId String? @unique
+  refundState String @default("none")
   fulfillmentHold String?
   stripePaymentIntentId String?
   status                String  @default("created")
@@ -160,6 +172,8 @@ model Order {
   supplierStatus        String?   @default("pending")
   supplierId            String?
 
+  reservation CheckoutReservation? @relation(fields:[reservationId],references:[id])
+  refunds RefundOperation[]
   dispatches SupplierDispatch[]
   items OrderItem[]
 
@@ -226,6 +240,12 @@ model SupplierDispatch {
   trackingNumber String?
   attempts Int @default(0)
   lastAttemptAt DateTime?
+  nextAttemptAt DateTime @default(now())
+  retryAlertedAt DateTime?
+  reconciliationStatus String @default("none")
+  reconciliationNote String?
+  stockAccountedAt DateTime?
+  labelUrl String?
   sentAt DateTime?
   lastError String?
   createdAt DateTime @default(now())
@@ -235,4 +255,53 @@ model SupplierDispatch {
   @@unique([orderId, supplierId])
   @@unique([supplierId, supplierOrderId])
   @@index([status, lastAttemptAt])
+}
+
+model CheckoutReservation {
+ id String @id @default(cuid())
+ status String @default("creating")
+ stripeSessionId String? @unique
+ cartJson String
+ stripeRequestJson String?
+ shippingServiceJson String?
+ expiresAt DateTime
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ items ReservationItem[]
+ order Order?
+ @@index([status,expiresAt])
+}
+model ReservationItem {
+ id String @id @default(cuid())
+ reservationId String
+ productId String
+ supplierId String?
+ quantity Int
+ status String @default("held")
+ reservation CheckoutReservation @relation(fields:[reservationId],references:[id],onDelete:Cascade)
+ @@unique([reservationId,productId])
+ @@index([productId,status])
+}
+model RefundOperation {
+ id String @id @default(cuid())
+ orderId String
+ requestKey String @unique
+ amountCents Int
+ status String @default("requested")
+ stripeRefundId String? @unique
+ requestedBy String
+ lastError String?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ order Order @relation(fields:[orderId],references:[id])
+ @@index([orderId,status])
+}
+model OperationsAlert {
+ id String @id @default(cuid())
+ key String @unique
+ code String
+ orderId String?
+ dispatchId String?
+ acknowledgedAt DateTime?
+ createdAt DateTime @default(now())
 }

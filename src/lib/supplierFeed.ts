@@ -8,6 +8,7 @@ export type FeedItem = {
   title: string;
   description?: string;
   price: number;
+  costPrice?: number;
   currency: 'EUR';
   quantity?: number;
   images: string[];
@@ -24,6 +25,7 @@ const itemSchema = z.object({
   id: z.string().trim().min(1).max(150),
   title: z.string().trim().min(1).max(500),
   description: z.string().max(30000).optional(),
+  costPrice: z.number().finite().positive().max(100000).optional(),
   price: z.number().finite().positive().max(100000),
   currency: z.literal('EUR'),
   quantity: z.number().int().min(0).max(1000000).optional(),
@@ -104,6 +106,10 @@ export function normalizeFeedItem(
     title: optionalText(raw.title),
     description: optionalText(raw.description),
     price: euro(raw.price),
+    costPrice:
+      optionalText(raw.costPrice) === undefined
+        ? undefined
+        : euro(raw.costPrice),
     currency: optionalText(raw.currency) || 'EUR',
     quantity: optionalInt(raw.quantity),
     images: imageList(raw.images),

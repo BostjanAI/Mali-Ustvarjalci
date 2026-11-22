@@ -1,3 +1,8 @@
+import {
+  resolveHeldOrder,
+  recordSupplierReconciliation,
+} from '@/lib/orderResolution';
+import { shippingAddressSchema } from '@/lib/orderDelivery';
 import { prisma } from '@/lib/prisma';
 import { forwardOrderToSupplier } from '@/lib/supplierForward';
 import { revalidatePath } from 'next/cache';
@@ -5,6 +10,8 @@ import { formatCurrencyCents } from '@/lib/i18n';
 import { redirect } from 'next/navigation';
 import { requireAdmin } from '@/lib/requireAdmin';
 import { readShippingAddress } from '@/lib/orderDelivery';
+import { requestOrderRefund } from '@/lib/refunds';
+import { randomUUID } from 'node:crypto';
 
 async function retryForward(formData: FormData) {
   'use server';
@@ -13,7 +20,7 @@ async function retryForward(formData: FormData) {
   const locale = String(formData.get('locale') || 'sl');
 
   try {
-    await forwardOrderToSupplier(id);
+    await forwardOrderToSupplier(id, { force: true });
     revalidatePath(`/${locale}/admin/orders`);
   } catch (error: any) {
     console.error('Retry forward error:', error);
@@ -22,28 +29,22 @@ async function retryForward(formData: FormData) {
 
 async function refundOrder(formData: FormData) {
   'use server';
-  const orderId = String(formData.get('orderId'));
-  const locale = String(formData.get('locale') || 'sl');
-
+  const session = await requireAdmin();
+  const lang = formData.get('locale') === 'en' ? 'en' : 'sl';
+  let notice = 'refund-requested';
   try {
-    const response = await fetch(
-      `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/admin/refund`,
+    await requestOrderRefund(
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId }),
+        orderId: String(formData.get('orderId')),
+        requestId: String(formData.get('requestId')),
       },
+      (session.user as { id: string }).id,
     );
-
-    if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.error || 'Refund failed');
-    }
-
-    revalidatePath(`/${locale}/admin/orders`);
-  } catch (error: any) {
-    console.error('Refund error:', error);
+  } catch {
+    notice = 'refund-review';
   }
+  revalidatePath('/' + lang + '/admin/orders');
+  redirect('/' + lang + '/admin/orders?notice=' + notice);
 }
 
 export default async function OrdersPage({
@@ -51,7 +52,7 @@ export default async function OrdersPage({
   searchParams,
 }: {
   params: { locale: string };
-  searchParams: { status?: string; search?: string };
+  searchParams: { status?: string; search?: string; notice?: string };
 }) {
   await requireAdmin();
   const locale = params.locale === 'en' ? 'en' : 'sl';
@@ -74,6 +75,7 @@ export default async function OrdersPage({
     orderBy: { createdAt: 'desc' },
     take: 100,
     include: {
+      refunds: true,
       dispatches: { include: { supplier: { select: { name: true } } } },
     },
   });
@@ -83,8 +85,40 @@ export default async function OrdersPage({
     _count: { status: true },
   });
 
+  const alerts = await prisma.operationsAlert.findMany({
+    where: { acknowledgedAt: null },
+    orderBy: { createdAt: 'desc' },
+    take: 30,
+  });
   return (
     <div className="space-y-6">
+      {searchParams.notice && (
+        <p role="status">
+          {searchParams.notice === 'refund-requested'
+            ? 'Vračilo je zabeleženo; preveri stanje vračila in uskladitev dobavitelja.'
+            : 'Potrebna je obravnava skrbnika; preveri podatke in stanje.'}
+        </p>
+      )}
+      {alerts.length > 0 && (
+        <section className="p-4 border rounded">
+          <h2 className="font-bold">Operativna opozorila ({alerts.length})</h2>
+          {alerts.map((a) => (
+            <form
+              action={acknowledgeAlert}
+              key={a.id}
+              className="flex gap-3 mt-2"
+            >
+              <span>
+                {a.code} · {a.orderId || a.dispatchId || '—'}
+              </span>
+              <input type="hidden" name="id" value={a.id} />
+              <button className="border rounded px-2">
+                Označi kot pregledano
+              </button>
+            </form>
+          ))}
+        </section>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Orders</h1>
         <div className="text-sm text-gray-600">
@@ -166,6 +200,13 @@ export default async function OrdersPage({
                   <td className="py-3 px-4">
                     <p>{o.email}</p>
                     <DeliveryAddress json={o.shippingAddressJson} />
+                    <p>Vračilo: {o.refundState}</p>
+                    {o.fulfillmentHold && (
+                      <HoldResolution
+                        orderId={o.id}
+                        json={o.shippingAddressJson}
+                      />
+                    )}
                     {o.fulfillmentHold && (
                       <p className="text-red-700 mt-2">
                         {locale === 'en'
@@ -208,6 +249,21 @@ export default async function OrdersPage({
                               {d.trackingNumber}
                             </p>
                           )}
+                          {d.labelUrl && (
+                            <a
+                              href={d.labelUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              Odpri nalepko dobavitelja
+                            </a>
+                          )}
+                          <p>Uskladitev: {d.reconciliationStatus}</p>
+                          <p>
+                            Naslednji poskus:{' '}
+                            {d.nextAttemptAt.toLocaleString('sl-SI')}
+                          </p>
+                          <SupplierReconciliation dispatchId={d.id} />
                           {d.lastError && (
                             <p className="text-red-700">{d.lastError}</p>
                           )}
@@ -239,6 +295,11 @@ export default async function OrdersPage({
                       </form>
                       <form action={refundOrder}>
                         <input type="hidden" name="orderId" value={o.id} />
+                        <input
+                          type="hidden"
+                          name="requestId"
+                          value={randomUUID()}
+                        />
                         <input type="hidden" name="locale" value={locale} />
                         <button className="border border-red-300 text-red-700 px-3 py-1 rounded hover:bg-red-50 transition-colors text-xs">
                           Refund
@@ -298,5 +359,173 @@ function DeliveryAddress({ json }: { json: string | null }) {
       <p>{[a.state, a.country].filter(Boolean).join(', ')}</p>
       <p>{a.phone}</p>
     </address>
+  );
+}
+
+async function acknowledgeAlert(form: FormData) {
+  'use server';
+  await requireAdmin();
+  await prisma.operationsAlert.update({
+    where: { id: String(form.get('id')) },
+    data: { acknowledgedAt: new Date() },
+  });
+  revalidatePath('/sl/admin/orders');
+  revalidatePath('/en/admin/orders');
+}
+async function resolveHold(form: FormData) {
+  'use server';
+  const session = await requireAdmin();
+  const mode =
+    form.get('resolution') === 'manual_fulfilled'
+      ? 'manual_fulfilled'
+      : 'address';
+  const address =
+    mode === 'address'
+      ? shippingAddressSchema.parse(
+          Object.fromEntries(
+            [
+              'name',
+              'line1',
+              'line2',
+              'city',
+              'postalCode',
+              'state',
+              'country',
+              'phone',
+              'firstName',
+              'lastName',
+              'streetName',
+              'streetNumber1',
+              'streetNumber2',
+            ].map((key) => [key, String(form.get(key) || '')]),
+          ),
+        )
+      : undefined;
+  await resolveHeldOrder(
+    String(form.get('orderId')),
+    mode,
+    String(form.get('evidence')),
+    (session.user as { id: string }).id,
+    address,
+  );
+  revalidatePath('/sl/admin/orders');
+  revalidatePath('/en/admin/orders');
+}
+async function reconcileSupplier(form: FormData) {
+  'use server';
+  const session = await requireAdmin();
+  const resolution = String(form.get('resolution'));
+  if (
+    !['cancel_confirmed', 'return_confirmed', 'stock_included'].includes(
+      resolution,
+    )
+  )
+    throw new Error('Invalid reconciliation');
+  await recordSupplierReconciliation(
+    String(form.get('dispatchId')),
+    resolution as 'cancel_confirmed' | 'return_confirmed' | 'stock_included',
+    String(form.get('evidence')),
+    (session.user as { id: string }).id,
+  );
+  revalidatePath('/sl/admin/orders');
+  revalidatePath('/en/admin/orders');
+}
+function HoldResolution({
+  orderId,
+  json,
+}: {
+  orderId: string;
+  json: string | null;
+}) {
+  const a = readShippingAddress(json);
+  const fields = [
+    ['name', 'Prejemnik'],
+    ['line1', 'Ulica in hišna številka'],
+    ['line2', 'Druga vrstica naslova'],
+    ['postalCode', 'Poštna številka'],
+    ['city', 'Kraj'],
+    ['state', 'Regija'],
+    ['country', 'Država (SI/AT/DE/HR/IT)'],
+    ['phone', 'Telefon'],
+    ['firstName', 'Ime'],
+    ['lastName', 'Priimek'],
+    ['streetName', 'Ime ulice za Ikonko'],
+    ['streetNumber1', 'Hišna številka za Ikonko'],
+    ['streetNumber2', 'Stanovanje za Ikonko'],
+  ];
+  return (
+    <details className="mt-3">
+      <summary>Razreši zadržanje</summary>
+      <form action={resolveHold} className="space-y-2 mt-2">
+        <input type="hidden" name="orderId" value={orderId} />
+        <label>
+          Odločitev
+          <select name="resolution" className="border block">
+            <option value="address">Popravi naslov pred prvim poskusom</option>
+            <option value="manual_fulfilled">
+              Dokazano izpolnjeno ročno; ustavi avtomatiko
+            </option>
+          </select>
+        </label>
+        {fields.map(([key, label]) => (
+          <label key={key} className="block text-xs">
+            {label}
+            <input
+              name={key}
+              className="border rounded block w-full"
+              defaultValue={a?.[key as keyof typeof a] || ''}
+            />
+          </label>
+        ))}
+        <label className="block text-xs">
+          Razlog in dokazilo
+          <textarea
+            name="evidence"
+            required
+            minLength={12}
+            className="border block w-full"
+          />
+        </label>
+        <button className="border rounded px-3 py-1">Shrani odločitev</button>
+      </form>
+      <p className="text-xs">
+        Za nedobavljivo naročilo uporabi vračilo plačila. Sprememba naslova ne
+        odpravi drugih zadržanj.
+      </p>
+    </details>
+  );
+}
+function SupplierReconciliation({ dispatchId }: { dispatchId: string }) {
+  return (
+    <details className="mt-2">
+      <summary>Uskladitev dobavitelja</summary>
+      <form action={reconcileSupplier} className="space-y-2">
+        <input type="hidden" name="dispatchId" value={dispatchId} />
+        <label>
+          Potrditev
+          <select name="resolution" className="border block">
+            <option value="cancel_confirmed">
+              Dobavitelj je potrdil preklic
+            </option>
+            <option value="return_confirmed">
+              Dobavitelj je potrdil prejem vračila
+            </option>
+            <option value="stock_included">
+              Svež vir zaloge že vključuje to naročilo
+            </option>
+          </select>
+        </label>
+        <label>
+          Dokazilo / referenca
+          <textarea
+            name="evidence"
+            required
+            minLength={12}
+            className="border block w-full"
+          />
+        </label>
+        <button className="border rounded px-2">Zabeleži uskladitev</button>
+      </form>
+    </details>
   );
 }

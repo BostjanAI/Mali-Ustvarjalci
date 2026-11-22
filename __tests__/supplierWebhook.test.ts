@@ -1,3 +1,5 @@
+jest.mock('@/lib/prisma', () => ({ prisma: {} }));
+jest.mock('@/lib/email', () => ({ sendShippingUpdate: jest.fn() }));
 import { POST as supplierWebhook } from '@/app/api/supplier-webhook/route';
 
 describe('supplier webhook', () => {
@@ -11,5 +13,3 @@ describe('supplier webhook', () => {
     expect(res.status).toBe(401);
   });
 });
-
-

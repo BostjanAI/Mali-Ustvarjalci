@@ -6,6 +6,8 @@ export const checkoutSchema = z.object({
   lastName: z.string().trim().min(1, 'Last name is required').max(100),
   email: z.string().email('Invalid email address'),
   street: z.string().trim().min(1, 'Street address is required').max(200),
+  streetNumber1: z.string().trim().min(1).max(30),
+  addressLine2: z.string().trim().max(100).optional(),
   city: z.string().trim().min(1, 'City is required').max(100),
   postalCode: z.string().trim().min(1, 'Postal code is required').max(20),
   country: z.enum(deliveryCountries),

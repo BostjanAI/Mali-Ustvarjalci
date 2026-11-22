@@ -1,9 +1,14 @@
+jest.mock('@/lib/prisma', () => ({
+  prisma: { order: { findUnique: jest.fn().mockResolvedValue(null) } },
+}));
 import { forwardOrderToSupplier } from '@/lib/supplierForward';
-
-describe('forwardOrderToSupplier', () => {
-  it('does not throw if SUPPLIER_ORDER_URL is missing', async () => {
-    await expect(forwardOrderToSupplier('non-existent-order')).resolves.toBeUndefined();
+test('nonexistent order is blocked without a supplier request', async () => {
+  const fetchSpy = jest.spyOn(global, 'fetch');
+  await expect(forwardOrderToSupplier('missing')).resolves.toEqual({
+    sent: 0,
+    blocked: 1,
+    retryable: false,
   });
+  expect(fetchSpy).not.toHaveBeenCalled();
+  fetchSpy.mockRestore();
 });
-
-

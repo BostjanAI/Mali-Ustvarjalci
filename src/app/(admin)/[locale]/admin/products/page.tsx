@@ -107,6 +107,8 @@ async function saveProduct(form: FormData) {
       active: wantsActive,
       catalogReviewedAt: wantsActive ? new Date() : null,
       supplierManaged: form.get('supplierManaged') === 'on',
+      stockManaged: form.get('stockManaged') === 'on',
+      priceManaged: form.get('priceManaged') === 'on',
       ...(stockConfirmed
         ? {
             inventory: {
@@ -389,8 +391,37 @@ export default async function AdminProductsPage({
                   defaultChecked={product.supplierManaged}
                 />
                 {en
-                  ? 'Update this product from supplier feed'
-                  : 'Izdelek posodabljaj iz dobaviteljevega vira'}
+                  ? 'Update product content from supplier feed'
+                  : 'Vsebino posodabljaj iz dobaviteljevega vira'}
+              </label>
+              <p className="admin-meta">
+                {en
+                  ? 'Supplier price / cost (cents)'
+                  : 'Cena vira / nabavna cena (centi)'}
+                : {product.supplierPriceCents ?? '—'} /{' '}
+                {product.costPriceCents ?? '—'} ·{' '}
+                {en ? 'Reserved quantity' : 'Rezervirana količina'}:{' '}
+                {product.inventory?.allocatedQuantity ?? 0}
+              </p>
+              <label className="admin-check">
+                <input
+                  type="checkbox"
+                  name="stockManaged"
+                  defaultChecked={product.stockManaged}
+                />
+                {en
+                  ? 'Refresh stock independently of content'
+                  : 'Zalogo osvežuj neodvisno od vsebine'}
+              </label>
+              <label className="admin-check">
+                <input
+                  type="checkbox"
+                  name="priceManaged"
+                  defaultChecked={product.priceManaged}
+                />
+                {en
+                  ? 'Allow feed to update the selling price'
+                  : 'Dovoli viru posodabljanje prodajne cene'}
               </label>
               <label className="admin-check">
                 <input

@@ -1,6 +1,11 @@
 import { z } from 'zod';
 export const deliveryCountries = ['SI', 'AT', 'DE', 'HR', 'IT'] as const;
 export const shippingAddressSchema = z.object({
+  firstName: z.string().max(100).default(''),
+  lastName: z.string().max(100).default(''),
+  streetName: z.string().max(200).default(''),
+  streetNumber1: z.string().max(30).default(''),
+  streetNumber2: z.string().max(100).default(''),
   name: z.string().trim().min(1).max(200),
   line1: z.string().trim().min(1).max(200),
   line2: z.string().trim().max(200).default(''),
@@ -52,6 +57,14 @@ export function sessionShippingAddress(
         country: m.country,
         phone: m.phone,
       };
+  const sameAddress = !shipping || candidate.line1 === m.street;
+  Object.assign(candidate, {
+    firstName: sameAddress ? m.firstName || '' : '',
+    lastName: sameAddress ? m.lastName || '' : '',
+    streetName: sameAddress ? m.streetName || '' : '',
+    streetNumber1: sameAddress ? m.streetNumber1 || '' : '',
+    streetNumber2: sameAddress ? m.addressLine2 || '' : '',
+  });
   const parsed = shippingAddressSchema.safeParse(candidate);
   return parsed.success ? parsed.data : null;
 }
@@ -88,7 +101,7 @@ export function supplierPayload(
   if (items.some((i) => !i.supplierProductId))
     throw new Error('Supplier product reference missing');
   return {
-    version: 1,
+    version: 1 as const,
     orderId,
     contact: { email, phone: address.phone },
     shippingAddress: address,

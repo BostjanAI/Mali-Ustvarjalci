@@ -16,12 +16,18 @@ type Row = {
   categoryPath: string | null;
   brand: string | null;
   detailsJson: string | null;
-  inventory: { quantity: number; syncedAt: Date | null } | null;
+  inventory: {
+    quantity: number;
+    allocatedQuantity: number;
+    syncedAt: Date | null;
+  } | null;
 };
 export function catalogProduct(row: Row, locale: string): CatalogProduct {
   const details = parseProductDetails(row.detailsJson);
   const availability = stockAvailability(
-    row.inventory?.quantity,
+    row.inventory
+      ? Math.max(0, row.inventory.quantity - row.inventory.allocatedQuantity)
+      : null,
     row.inventory?.syncedAt,
     Date.now(),
     settings.stockMaxAgeHours,
@@ -39,7 +45,14 @@ export function catalogProduct(row: Row, locale: string): CatalogProduct {
     ageLabel: ageText(details, locale),
     availability,
     stockQuantity:
-      availability === 'unknown' ? null : (row.inventory?.quantity ?? null),
+      availability === 'unknown'
+        ? null
+        : row.inventory
+          ? Math.max(
+              0,
+              row.inventory.quantity - row.inventory.allocatedQuantity,
+            )
+          : null,
     stockCheckedAt: row.inventory?.syncedAt?.toISOString() || null,
   };
 }
@@ -58,5 +71,7 @@ export const catalogSelect = {
   categoryPath: true,
   brand: true,
   detailsJson: true,
-  inventory: { select: { quantity: true, syncedAt: true } },
+  inventory: {
+    select: { quantity: true, allocatedQuantity: true, syncedAt: true },
+  },
 } as const;

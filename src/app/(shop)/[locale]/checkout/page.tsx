@@ -72,10 +72,22 @@ export default function CheckoutPage() {
     },
     {
       name: 'street',
-      sl: 'Ulica in hišna številka',
-      en: 'Street address',
+      sl: 'Ulica',
+      en: 'Street name',
       auto: 'street-address',
       wide: true,
+    },
+    {
+      name: 'streetNumber1',
+      sl: 'Hišna številka',
+      en: 'Building number',
+      auto: 'address-line2',
+    },
+    {
+      name: 'addressLine2',
+      sl: 'Stanovanje (neobvezno)',
+      en: 'Apartment (optional)',
+      auto: 'address-line3',
     },
     {
       name: 'postalCode',

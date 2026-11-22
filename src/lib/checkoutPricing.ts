@@ -9,7 +9,11 @@ export type PricedProduct = {
   currency: string;
   supplierId?: string | null;
   supplierProductId?: string | null;
-  inventory?: { quantity: number; syncedAt?: Date | string | null } | null;
+  inventory?: {
+    quantity: number;
+    allocatedQuantity?: number;
+    syncedAt?: Date | string | null;
+  } | null;
 };
 export function priceCart(items: RequestedItem[], products: PricedProduct[]) {
   const quantities = new Map<string, number>();
@@ -42,7 +46,11 @@ export function priceCart(items: RequestedItem[], products: PricedProduct[]) {
       ) !== 'in_stock'
     )
       throw new Error('Inventory is not confirmed');
-    if (product.inventory!.quantity < quantity)
+    if (
+      product.inventory!.quantity -
+        (product.inventory!.allocatedQuantity || 0) <
+      quantity
+    )
       throw new Error('Insufficient inventory');
     return {
       id: product.id,

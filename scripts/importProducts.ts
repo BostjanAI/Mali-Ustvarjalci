@@ -1,59 +1,45 @@
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
-import { parse } from 'csv-parse';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
-
-async function importCsv(filePath: string) {
-  const records: any[] = [];
-  const parser = fs
-    .createReadStream(path.resolve(filePath))
-    .pipe(parse({ columns: true, skip_empty_lines: true }));
-
-  for await (const record of parser) records.push(record);
-
-  for (const row of records) {
-    const slug = row.slug || row.title.toLowerCase().replace(/\s+/g, '-');
-    await prisma.product.upsert({
-      where: { slug },
-      update: {
-        title: row.title,
-        description: row.description ?? null,
-        priceCents: Math.round(parseFloat(row.price) * 100),
-        brand: row.brand ?? null,
-        categoryPath: row.categoryPath ?? null,
-      },
-      create: {
-        title: row.title,
-        slug,
-        description: row.description ?? null,
-        priceCents: Math.round(parseFloat(row.price) * 100),
-        imagesJson: JSON.stringify([]),
-        brand: row.brand ?? null,
-        categoryPath: row.categoryPath ?? null,
-        variants: { create: [{ name: 'Default', sku: row.sku ?? slug, priceCents: Math.round(parseFloat(row.price) * 100) }] },
-        inventory: { create: { quantity: parseInt(row.quantity ?? '0', 10) } },
-      },
-    });
-  }
-}
-
+import { loadEnvConfig } from '@next/env';
+import { parseSupplierFeed } from '../src/lib/supplierFeed';
+import { feedReport } from '../src/lib/feedReport';
+loadEnvConfig(process.cwd());
 async function main() {
-  const [, , csvPath] = process.argv;
-  if (!csvPath) {
-    console.error('Usage: npm run import:products -- <path-to-csv>');
-    process.exit(1);
+  const args = process.argv.slice(2);
+  const file = args[0];
+  if (!file || file.startsWith('--'))
+    throw new Error(
+      'Usage: npm run import:products -- catalog.csv --supplier SUPPLIER_ID [--apply]',
+    );
+  const supplierIndex = args.indexOf('--supplier');
+  const supplierId = supplierIndex >= 0 ? args[supplierIndex + 1] : undefined;
+  const absolute = path.resolve(file);
+  const stat = await fs.stat(absolute);
+  if (stat.size > 10 * 1024 * 1024) throw new Error('Catalog exceeds 10 MB');
+  const items = parseSupplierFeed(
+    await fs.readFile(absolute, 'utf8'),
+    path.extname(absolute),
+    supplierId || 'environment-supplier',
+  );
+  console.log(JSON.stringify(feedReport(items), null, 2));
+  if (!args.includes('--apply')) {
+    console.log('Dry run only. No database changes.');
+    return;
   }
-  await importCsv(csvPath);
-  console.log('Import completed');
+  if (!supplierId) throw new Error('--supplier is required for --apply');
+  const { prisma } = await import('../src/lib/prisma');
+  try {
+    const supplier = await prisma.supplier.findUnique({
+      where: { id: supplierId },
+    });
+    if (!supplier) throw new Error('Supplier does not exist');
+    const { applySupplierItems } = await import('../src/lib/supplierSync');
+    console.log(await applySupplierItems(supplierId, items));
+  } finally {
+    await prisma.$disconnect();
+  }
 }
-
-main().finally(async () => prisma.$disconnect());
-
-
-
-
-
-
-
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : 'Import failed');
+  process.exitCode = 1;
+});

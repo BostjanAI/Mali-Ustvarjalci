@@ -1,160 +1,275 @@
 import { prisma } from '@/lib/prisma';
-import { XMLParser } from 'fast-xml-parser';
-
-export type FeedItem = {
-  id: string;
-  title: string;
-  description?: string;
-  price: number;
-  currency?: string;
-  quantity?: number;
-  images?: string[];
-  brand?: string;
-  categoryPath?: string;
+import { createHash } from 'node:crypto';
+import { parseProductDetails } from './productDetails';
+import importSettings from '../../config/supplier-import.json';
+import { fetchFeed, type FeedItem } from './supplierFeed';
+export { fetchFeed } from './supplierFeed';
+export type { FeedItem } from './supplierFeed';
+export type SyncResult = {
+  added: number;
+  updated: number;
+  deactivated: number;
+  errors: number;
+  skipped: number;
+  unmappedCategories: string[];
 };
-
-export async function fetchFeed(url: string, apiKey?: string): Promise<FeedItem[]> {
-  const res = await fetch(url, {
-    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
-    cache: 'no-store',
+const blank = (): SyncResult => ({
+  added: 0,
+  updated: 0,
+  deactivated: 0,
+  errors: 0,
+  skipped: 0,
+  unmappedCategories: [],
+});
+export function supplierSlug(title: string, supplierId: string, id: string) {
+  const titlePart =
+    title
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 90) || 'product';
+  return (
+    titlePart +
+    '-' +
+    createHash('sha256')
+      .update(supplierId + ':' + id)
+      .digest('hex')
+      .slice(0, 16)
+  );
+}
+export async function applySupplierItems(
+  supplierId: string,
+  items: FeedItem[],
+  options: { deactivateMissing?: boolean } = {},
+): Promise<SyncResult> {
+  if (!items.length || new Set(items.map((i) => i.id)).size !== items.length)
+    throw new Error('A complete valid feed is required');
+  const result = blank();
+  result.unmappedCategories = Array.from(
+    new Set(
+      items.filter((i) => !i.category).map((i) => i.rawCategory || '(missing)'),
+    ),
+  );
+  await prisma.$transaction(
+    async (tx) => {
+      for (const item of items) {
+        const existing = await tx.product.findUnique({
+          where: {
+            supplierId_supplierProductId: {
+              supplierId,
+              supplierProductId: item.id,
+            },
+          },
+        });
+        if (existing && !existing.supplierManaged) {
+          result.skipped++;
+          continue;
+        }
+        const now = new Date();
+        const imagesJson = JSON.stringify(item.images);
+        const detailsJson = JSON.stringify(item.details);
+        const imagesChanged =
+          !!existing &&
+          (existing.imagesJson !== imagesJson ||
+            parseProductDetails(existing.detailsJson).imageRightsSource !==
+              item.details.imageRightsSource);
+        const contentChanged =
+          !!existing &&
+          (existing.title !== item.title ||
+            existing.description !== (item.description || null) ||
+            existing.categoryPath !== item.category ||
+            existing.detailsJson !== detailsJson ||
+            existing.brand !== (item.brand || null));
+        const needsReview =
+          !existing || imagesChanged || contentChanged || !item.category;
+        const inventory =
+          item.quantity === undefined
+            ? undefined
+            : {
+                upsert: {
+                  update: {
+                    quantity: item.quantity,
+                    lastSupplierQty: item.quantity,
+                    syncedAt: now,
+                  },
+                  create: {
+                    quantity: item.quantity,
+                    lastSupplierQty: item.quantity,
+                    syncedAt: now,
+                  },
+                },
+              };
+        const data = {
+          title: item.title,
+          description: item.description || null,
+          priceCents: Math.round(item.price * 100),
+          currency: item.currency,
+          brand: item.brand || null,
+          categoryPath: item.category,
+          supplierCategoryPath: item.rawCategory || null,
+          detailsJson,
+          imagesJson,
+          lastSyncedAt: now,
+          ...(needsReview ? { active: false, catalogReviewedAt: null } : {}),
+          ...(imagesChanged ? { imagesVerifiedAt: null } : {}),
+          ...(inventory ? { inventory } : {}),
+        };
+        if (existing) {
+          await tx.product.update({ where: { id: existing.id }, data });
+          result.updated++;
+        } else {
+          const quantity = item.quantity ?? 0;
+          await tx.product.create({
+            data: {
+              ...data,
+              active: false,
+              supplierId,
+              supplierProductId: item.id,
+              supplierManaged: true,
+              slug: supplierSlug(item.title, supplierId, item.id),
+              variants: {
+                create: [
+                  {
+                    name: 'Default',
+                    sku: supplierId + ':' + item.id,
+                    priceCents: Math.round(item.price * 100),
+                  },
+                ],
+              },
+              inventory: {
+                create: {
+                  quantity,
+                  lastSupplierQty: item.quantity ?? null,
+                  syncedAt: item.quantity === undefined ? null : now,
+                },
+              },
+            },
+          });
+          result.added++;
+        }
+      }
+      if (options.deactivateMissing) {
+        const changed = await tx.product.updateMany({
+          where: {
+            supplierId,
+            supplierManaged: true,
+            active: true,
+            supplierProductId: { notIn: items.map((i) => i.id) },
+          },
+          data: { active: false },
+        });
+        result.deactivated = changed.count;
+      }
+      await tx.supplier.update({
+        where: { id: supplierId },
+        data: { lastSyncedAt: new Date() },
+      });
+      await tx.syncLog.create({
+        data: {
+          supplierId,
+          type: 'sync',
+          added: result.added,
+          updated: result.updated,
+          deactivated: result.deactivated,
+          errors: 0,
+          message: JSON.stringify({
+            unmappedCategories: result.unmappedCategories,
+            skipped: result.skipped,
+          }),
+        },
+      });
+    },
+    { timeout: 120000 },
+  );
+  return result;
+}
+function due(last: Date | null, frequency: string | null) {
+  return (
+    !last ||
+    (frequency !== '@daily' && frequency !== '@hourly') ||
+    Date.now() - last.getTime() >=
+      (frequency === '@hourly' ? 3600000 : 86400000)
+  );
+}
+export async function runSupplierSync() {
+  let suppliers = await prisma.supplier.findMany({
+    where: { active: true },
+    orderBy: { createdAt: 'asc' },
   });
-  if (!res.ok) throw new Error(`Failed to fetch supplier feed: ${res.status}`);
-  const contentType = res.headers.get('content-type') || '';
-  const checksumHeader = res.headers.get('x-feed-sha256');
-  const text = await res.text();
-  if (checksumHeader && typeof window === 'undefined') {
-    const crypto = await import('node:crypto');
-    const hash = crypto.createHash('sha256').update(text).digest('hex');
-    if (hash !== checksumHeader) {
-      throw new Error('Supplier feed checksum mismatch');
-    }
-  }
-  if (contentType.includes('application/json')) {
-    const data = JSON.parse(text);
-    return (data.items || data) as FeedItem[];
-  }
-  if (contentType.includes('text/csv')) {
-    const lines = text.trim().split('\n');
-    const [header, ...rows] = lines;
-    const cols = header.split(',');
-    return rows.map((r) => {
-      const vals = r.split(',');
-      const obj: any = {};
-      cols.forEach((c, i) => (obj[c] = vals[i]));
-      return {
-        id: obj.id,
-        title: obj.title,
-        description: obj.description,
-        price: parseFloat(obj.price),
-        quantity: parseInt(obj.quantity ?? '0', 10),
-      } as FeedItem;
+  if (!suppliers.length) {
+    const url = process.env.SUPPLIER_FEED_URL;
+    const name = process.env.SUPPLIER_NAME;
+    if (!url || !name)
+      throw new Error('Configure a supplier name and feed first');
+    const items = await fetchFeed(
+      url,
+      process.env.SUPPLIER_API_KEY,
+      'environment-supplier',
+    );
+    const supplier = await prisma.supplier.upsert({
+      where: { id: 'environment-supplier' },
+      create: {
+        id: 'environment-supplier',
+        name,
+        feedUrl: url,
+        syncFrequency: '@daily',
+      },
+      update: { name, feedUrl: url },
+    });
+    return applySupplierItems(supplier.id, items, {
+      deactivateMissing: importSettings.deactivateMissing,
     });
   }
-  const parser = new XMLParser({ ignoreAttributes: false });
-  const xml = parser.parse(text);
-  const items = xml.items?.item || xml.rss?.channel?.item || [];
-  return items.map((it: any) => ({
-    id: it.id || it.guid || it.sku,
-    title: it.title,
-    description: it.description,
-    price: parseFloat(it.price),
-    quantity: parseInt(it.quantity ?? '0', 10),
-  }));
-}
-
-function isDue(last: Date | null, frequency?: string | null): boolean {
-  if (!frequency) return true;
-  const now = Date.now();
-  const lastMs = last ? last.getTime() : 0;
-  // Very simple presets
-  if (frequency === '@hourly') return now - lastMs >= 60 * 60 * 1000;
-  if (frequency === '@daily') return now - lastMs >= 24 * 60 * 60 * 1000;
-  return true;
-}
-
-export async function runSupplierSync() {
-  // Iterate all active suppliers; fallback to env single feed or demo
-  const suppliers = await prisma.supplier.findMany({ where: { active: true }, orderBy: { createdAt: 'asc' } });
-  const batches = suppliers.length ? suppliers : [{ id: 'env', name: 'ENV', feedUrl: process.env.SUPPLIER_FEED_URL, authToken: process.env.SUPPLIER_API_KEY, syncFrequency: '@daily', updatedAt: null } as any];
-  const allItems: FeedItem[] = [];
-  for (const s of batches) {
-    if (!s.feedUrl) continue;
-    if (!isDue((s as any).lastSyncedAt || (s as any).updatedAt || null, (s as any).syncFrequency)) continue;
+  const total = blank();
+  for (const supplier of suppliers) {
+    if (
+      !supplier.feedUrl ||
+      !due(supplier.lastSyncedAt, supplier.syncFrequency)
+    ) {
+      total.skipped++;
+      continue;
+    }
     try {
-      const items = await fetchFeed(s.feedUrl, s.authToken || process.env.SUPPLIER_API_KEY);
-      allItems.push(...items);
-      if ((s as any).id && (s as any).id !== 'env') {
-        await prisma.supplier.update({ where: { id: (s as any).id }, data: { lastSyncedAt: new Date() } });
-      }
-    } catch (e) {
-      // continue with others
+      const items = await fetchFeed(
+        supplier.feedUrl,
+        supplier.authToken || process.env.SUPPLIER_API_KEY,
+        supplier.id,
+      );
+      const supplierOptions = (
+        importSettings.suppliers as Record<
+          string,
+          { deactivateMissing?: boolean }
+        >
+      )[supplier.id];
+      const result = await applySupplierItems(supplier.id, items, {
+        deactivateMissing:
+          supplierOptions?.deactivateMissing ??
+          importSettings.deactivateMissing,
+      });
+      for (const key of [
+        'added',
+        'updated',
+        'deactivated',
+        'errors',
+        'skipped',
+      ] as const)
+        total[key] += result[key];
+      total.unmappedCategories.push(...result.unmappedCategories);
+    } catch {
+      total.errors++;
+      await prisma.syncLog.create({
+        data: {
+          supplierId: supplier.id,
+          type: 'sync',
+          errors: 1,
+          message:
+            'Feed download, validation or transaction failed; existing products were retained.',
+        },
+      });
     }
   }
-  const items = allItems.length ? allItems : await fetchFeed('demo:10');
-
-  let added = 0,
-    updated = 0,
-    deactivated = 0,
-    errors = 0;
-
-  const existing = await prisma.product.findMany({ select: { id: true, slug: true, supplierProductId: true } });
-  const existingBySupplierId = new Map(existing.map((p) => [p.supplierProductId ?? '', p]));
-  const seen = new Set<string>();
-
-  for (const item of items) {
-    try {
-      seen.add(item.id);
-      const found = existingBySupplierId.get(item.id);
-      const priceCents = Math.round(item.price * 100);
-      if (found) {
-        await prisma.product.update({
-          where: { id: found.id },
-          data: {
-            priceCents,
-            description: item.description ?? undefined,
-            lastSyncedAt: new Date(),
-            inventory: { upsert: { update: { quantity: item.quantity ?? 0 }, create: { quantity: item.quantity ?? 0 } } },
-          },
-        });
-        updated++;
-      } else {
-        await prisma.product.create({
-          data: {
-            title: item.title,
-            slug: item.title.toLowerCase().replace(/\s+/g, '-') + '-' + item.id,
-            description: item.description ?? null,
-            priceCents,
-            imagesJson: item.images ? JSON.stringify(item.images) : undefined,
-            supplierManaged: true,
-            supplierProductId: item.id,
-            lastSyncedAt: new Date(),
-            variants: { create: [{ name: 'Default', sku: item.id, priceCents }] },
-            inventory: { create: { quantity: item.quantity ?? 0 } },
-          },
-        });
-        added++;
-      }
-    } catch (e) {
-      errors++;
-    }
-  }
-
-  const toDeactivate = await prisma.product.findMany({
-    where: { supplierManaged: true, supplierProductId: { notIn: Array.from(seen) } },
-    select: { id: true },
-  });
-  if (toDeactivate.length) {
-    await prisma.product.updateMany({ where: { id: { in: toDeactivate.map((p) => p.id) } }, data: { active: false } });
-    deactivated += toDeactivate.length;
-  }
-
-  await prisma.syncLog.create({ data: { type: 'sync', added, updated, deactivated, errors, message: 'Supplier sync completed' } });
-  return { added, updated, deactivated, errors };
+  total.unmappedCategories = Array.from(new Set(total.unmappedCategories));
+  return total;
 }
-
-
-
-
-
-
-

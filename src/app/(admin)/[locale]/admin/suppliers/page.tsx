@@ -1,168 +1,219 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
-import { supplierSchema } from '@/lib/schemas/supplier';
 import { redirect } from 'next/navigation';
-
-async function createSupplier(formData: FormData) {
+import { z } from 'zod';
+import { requireAdmin } from '@/lib/requireAdmin';
+import { runSupplierSync } from '@/lib/supplierSync';
+const formSchema = z.object({
+  name: z.string().trim().min(1).max(250),
+  feedUrl: z
+    .string()
+    .url()
+    .refine((value) => {
+      const url = new URL(value);
+      return url.protocol === 'https:' && !url.username && !url.password;
+    }),
+  frequency: z.enum(['@hourly', '@daily']),
+});
+const value = (f: FormData, key: string) => String(f.get(key) || '').trim();
+const locale = (f: FormData) => (f.get('locale') === 'en' ? 'en' : 'sl');
+async function saveSupplier(form: FormData) {
   'use server';
-  const locale = String(formData.get('locale') || 'sl');
-  
-  try {
-    const data = {
-      name: String(formData.get('name') || ''),
-      feedUrl: String(formData.get('feedUrl') || ''),
-      authToken: String(formData.get('authToken') || ''),
-      syncFrequency: String(formData.get('syncFrequency') || ''),
-      active: true,
-    };
-
-    const validated = supplierSchema.parse(data);
-    
-    await prisma.supplier.create({
-      data: {
-        name: validated.name,
-        feedUrl: validated.feedUrl || null,
-        authToken: validated.authToken || null,
-        syncFrequency: validated.syncFrequency || null,
-        active: validated.active,
-      },
+  await requireAdmin();
+  const lang = locale(form);
+  const target = '/' + lang + '/admin/suppliers';
+  const parsed = formSchema.safeParse({
+    name: value(form, 'name'),
+    feedUrl: value(form, 'feedUrl'),
+    frequency: value(form, 'syncFrequency') || '@daily',
+  });
+  if (!parsed.success) redirect(target + '?notice=invalid');
+  const id = value(form, 'id');
+  const token = value(form, 'authToken');
+  const active = form.get('active') === 'on';
+  const data = {
+    name: parsed.data.name,
+    feedUrl: parsed.data.feedUrl,
+    syncFrequency: parsed.data.frequency,
+    active,
+    ...(token ? { authToken: token } : {}),
+  };
+  if (id) {
+    await prisma.$transaction(async (tx) => {
+      await tx.supplier.update({ where: { id }, data });
+      if (!active)
+        await tx.product.updateMany({
+          where: { supplierId: id, supplierManaged: true },
+          data: { active: false },
+        });
     });
-    revalidatePath(`/${locale}/admin/suppliers`);
-  } catch (error: any) {
-    console.error('Create supplier error:', error);
-  }
+  } else await prisma.supplier.create({ data });
+  revalidatePath(target);
+  redirect(target + '?notice=saved');
 }
-
-async function updateSupplier(formData: FormData) {
+async function syncNow(form: FormData) {
   'use server';
-  const id = String(formData.get('id'));
-  const locale = String(formData.get('locale') || 'sl');
-  
+  await requireAdmin();
+  const target = '/' + locale(form) + '/admin/suppliers';
+  if (process.env.NEXT_PUBLIC_MOCK_MODE === 'true')
+    redirect(target + '?notice=demo');
+  let failed = false;
   try {
-    const data = {
-      name: String(formData.get('name') || ''),
-      feedUrl: String(formData.get('feedUrl') || ''),
-      authToken: String(formData.get('authToken') || ''),
-      syncFrequency: String(formData.get('syncFrequency') || ''),
-      active: String(formData.get('active') || 'true') === 'true',
-    };
-
-    const validated = supplierSchema.parse(data);
-    
-    await prisma.supplier.update({
-      where: { id },
-      data: {
-        name: validated.name,
-        feedUrl: validated.feedUrl || null,
-        authToken: validated.authToken || null,
-        syncFrequency: validated.syncFrequency || null,
-        active: validated.active,
-      },
-    });
-    revalidatePath(`/${locale}/admin/suppliers`);
-  } catch (error: any) {
-    console.error('Update supplier error:', error);
+    const result = await runSupplierSync();
+    failed = result.errors > 0;
+  } catch {
+    failed = true;
   }
+  revalidatePath(target);
+  redirect(target + '?notice=' + (failed ? 'sync-error' : 'synced'));
 }
-
-async function deleteSupplier(formData: FormData) {
-  'use server';
-  const id = String(formData.get('id'));
-  const locale = String(formData.get('locale') || 'sl');
-  
-  try {
-    await prisma.supplier.delete({ where: { id } });
-    revalidatePath(`/${locale}/admin/suppliers`);
-  } catch (error: any) {
-    console.error('Delete supplier error:', error);
-  }
-}
-
-async function syncNow(formData: FormData) {
-  'use server';
-  const locale = String(formData.get('locale') || 'sl');
-  await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/admin/sync-now`, { method: 'POST' });
-  revalidatePath(`/${locale}/admin/suppliers`);
-}
-
-export default async function SuppliersPage({ params }: { params: { locale: string } }) {
-  const locale = params.locale || 'sl';
-  const suppliers = await prisma.supplier.findMany({ orderBy: { createdAt: 'desc' } });
+export default async function SuppliersPage({
+  params,
+  searchParams,
+}: {
+  params: { locale: string };
+  searchParams: { notice?: string };
+}) {
+  await requireAdmin();
+  const lang = params.locale === 'en' ? 'en' : 'sl';
+  const en = lang === 'en';
+  const suppliers = await prisma.supplier.findMany({
+    orderBy: { createdAt: 'desc' },
+  });
+  const notices: Record<string, string> = {
+    invalid: en
+      ? 'Enter a supplier name and valid HTTPS feed.'
+      : 'Vnesi naziv dobavitelja in veljaven vir HTTPS.',
+    saved: en ? 'Supplier saved.' : 'Dobavitelj je shranjen.',
+    demo: en
+      ? 'Sync is disabled in demo mode. Use the CLI dry run to inspect the feed.'
+      : 'Sinhronizacija je v predstavitvenem načinu izklopljena. Vir lahko preveriš s poskusnim uvozom CLI.',
+    synced: en ? 'Supplier sync completed.' : 'Sinhronizacija je končana.',
+    'sync-error': en
+      ? 'A supplier feed failed. Existing products for that failed import were retained; check sync logs.'
+      : 'Pri uvozu je prišlo do napake. Obstoječi izdelki neuspešnega uvoza so ohranjeni; preveri dnevnik.',
+  };
   return (
-    <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Suppliers</h1>
-      <form action={createSupplier} className="flex gap-2 items-end flex-wrap">
-        <input type="hidden" name="locale" value={locale} />
-        <div>
-          <label className="block text-sm">Name</label>
-          <input name="name" className="border rounded px-2 py-1" required />
-        </div>
-        <div>
-          <label className="block text-sm">Feed URL</label>
-          <input name="feedUrl" className="border rounded px-2 py-1 w-96" />
-        </div>
-        <div>
-          <label className="block text-sm">Auth Token</label>
-          <input name="authToken" className="border rounded px-2 py-1 w-64" />
-        </div>
-        <div>
-          <label className="block text-sm">Sync Frequency</label>
-          <input name="syncFrequency" placeholder="cron or @daily" className="border rounded px-2 py-1 w-48" />
-        </div>
-        <button className="bg-brand-600 text-white px-3 py-1 rounded">Create</button>
-        <form action={syncNow}>
-          <input type="hidden" name="locale" value={locale} />
-          <button className="ml-4 border px-3 py-1 rounded">Sync now</button>
+    <div className="catalog-admin">
+      <h1 className="text-2xl font-semibold">
+        {en ? 'Suppliers' : 'Dobavitelji'}
+      </h1>
+      {searchParams.notice && notices[searchParams.notice] && (
+        <p role="status" className="admin-message">
+          {notices[searchParams.notice]}
+        </p>
+      )}
+      <article>
+        <h2>{en ? 'Add supplier' : 'Dodaj dobavitelja'}</h2>
+        <form action={saveSupplier}>
+          <input type="hidden" name="locale" value={lang} />
+          <div className="admin-grid">
+            <label>
+              {en ? 'Supplier name' : 'Naziv dobavitelja'}
+              <input name="name" required />
+            </label>
+            <label>
+              {en ? 'Feed URL' : 'Vir kataloga'}
+              <input
+                name="feedUrl"
+                type="url"
+                required
+                placeholder="https://"
+              />
+            </label>
+            <label>
+              {en ? 'Access key' : 'Dostopni ključ'}
+              <input
+                name="authToken"
+                type="password"
+                autoComplete="new-password"
+              />
+            </label>
+            <label>
+              {en ? 'Frequency' : 'Pogostost'}
+              <select name="syncFrequency" defaultValue="@daily">
+                <option value="@hourly">{en ? 'Hourly' : 'Vsako uro'}</option>
+                <option value="@daily">{en ? 'Daily' : 'Dnevno'}</option>
+              </select>
+            </label>
+          </div>
+          <label className="admin-check">
+            <input name="active" type="checkbox" defaultChecked />
+            {en ? 'Enabled' : 'Omogočen'}
+          </label>
+          <button className="primary-btn">
+            {en ? 'Add supplier' : 'Dodaj dobavitelja'}
+          </button>
         </form>
+      </article>
+      <form action={syncNow}>
+        <input type="hidden" name="locale" value={lang} />
+        <button className="secondary-btn">
+          {en
+            ? 'Sync configured suppliers'
+            : 'Sinhroniziraj nastavljene dobavitelje'}
+        </button>
       </form>
-
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left border-b">
-            <th className="py-2">Name</th>
-            <th>Feed URL</th>
-            <th>Active</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {suppliers.map((s) => (
-            <tr key={s.id} className="border-b">
-              <td className="py-2">
-                <form action={updateSupplier} className="flex gap-2 items-center flex-wrap">
-                  <input type="hidden" name="id" value={s.id} />
-                  <input type="hidden" name="locale" value={locale} />
-                  <input name="name" defaultValue={s.name} className="border rounded px-2 py-1" />
-                  <input name="feedUrl" defaultValue={s.feedUrl ?? ''} className="border rounded px-2 py-1 w-80" />
-                  <input name="authToken" defaultValue={s.authToken ?? ''} className="border rounded px-2 py-1 w-64" placeholder="Auth token" />
-                  <input name="syncFrequency" defaultValue={s.syncFrequency ?? ''} className="border rounded px-2 py-1 w-48" placeholder="@daily" />
-                  <select name="active" defaultValue={String(s.active)} className="border rounded px-2 py-1">
-                    <option value="true">Active</option>
-                    <option value="false">Inactive</option>
-                  </select>
-                  <button className="border px-3 py-1 rounded">Save</button>
-                </form>
-              </td>
-              <td className="text-gray-600">{s.feedUrl}</td>
-              <td>{s.active ? 'Yes' : 'No'}</td>
-              <td>
-                <form action={deleteSupplier}>
-                  <input type="hidden" name="id" value={s.id} />
-                  <input type="hidden" name="locale" value={locale} />
-                  <button className="text-red-600">Delete</button>
-                </form>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {suppliers.map((s) => (
+        <article key={s.id}>
+          <h2>{s.name}</h2>
+          <p className="admin-meta">
+            ID: {s.id}
+            <br />
+            {en
+              ? 'Use this ID for category mappings in config/supplier-categories.json.'
+              : 'Ta ID uporabi za preslikave kategorij v config/supplier-categories.json.'}
+          </p>
+          <form action={saveSupplier}>
+            <input type="hidden" name="id" value={s.id} />
+            <input type="hidden" name="locale" value={lang} />
+            <div className="admin-grid">
+              <label>
+                {en ? 'Supplier name' : 'Naziv dobavitelja'}
+                <input name="name" required defaultValue={s.name} />
+              </label>
+              <label>
+                {en ? 'Feed URL' : 'Vir kataloga'}
+                <input
+                  name="feedUrl"
+                  type="url"
+                  required
+                  defaultValue={s.feedUrl || ''}
+                />
+              </label>
+              <label>
+                {en
+                  ? 'Replace access key (empty keeps current)'
+                  : 'Zamenjaj ključ (prazno ohrani trenutnega)'}
+                <input
+                  name="authToken"
+                  type="password"
+                  autoComplete="new-password"
+                />
+              </label>
+              <label>
+                {en ? 'Frequency' : 'Pogostost'}
+                <select
+                  name="syncFrequency"
+                  defaultValue={s.syncFrequency || '@daily'}
+                >
+                  <option value="@hourly">{en ? 'Hourly' : 'Vsako uro'}</option>
+                  <option value="@daily">{en ? 'Daily' : 'Dnevno'}</option>
+                </select>
+              </label>
+            </div>
+            <label className="admin-check">
+              <input name="active" type="checkbox" defaultChecked={s.active} />
+              {en
+                ? 'Enabled; disabling also hides this supplier’s products'
+                : 'Omogočen; izklop skrije tudi izdelke tega dobavitelja'}
+            </label>
+            <button className="primary-btn">
+              {en ? 'Save supplier' : 'Shrani dobavitelja'}
+            </button>
+          </form>
+        </article>
+      ))}
     </div>
   );
 }
-
-
-
-
-
-
-

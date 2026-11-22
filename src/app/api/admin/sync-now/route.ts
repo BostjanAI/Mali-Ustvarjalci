@@ -6,13 +6,23 @@ import { rateLimit } from '@/lib/rateLimit';
 import { runSupplierSync } from '@/lib/supplierSync';
 
 export async function POST(request: Request) {
-  if (process.env.DATABASE_URL?.startsWith('file:')) {
-    return NextResponse.json({ ok: false, message: 'DB not enabled; supplier sync disabled in mock mode.' }, { status: 400 });
+  if (
+    process.env.NEXT_PUBLIC_MOCK_MODE === 'true' ||
+    process.env.DATABASE_URL?.startsWith('file:')
+  ) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: 'DB not enabled; supplier sync disabled in mock mode.',
+      },
+      { status: 400 },
+    );
   }
 
   // Allow either admin session or CRON secret header
   const cronHeader = request.headers.get('x-cron-secret');
-  const cronOk = !!process.env.CRON_SECRET && cronHeader === process.env.CRON_SECRET;
+  const cronOk =
+    !!process.env.CRON_SECRET && cronHeader === process.env.CRON_SECRET;
   let isAdmin = false;
   let userId: string | undefined = undefined;
   if (!cronOk) {
@@ -21,21 +31,42 @@ export async function POST(request: Request) {
     userId = (session as any)?.user?.id;
   }
   if (!cronOk && !isAdmin) {
-    return NextResponse.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(
+      { ok: false, message: 'Unauthorized' },
+      { status: 401 },
+    );
   }
 
   // Rate limit by IP
   const ip = request.headers.get('x-forwarded-for') || 'unknown';
   if (!rateLimit(`admin-sync:${ip}`, 10, 60_000)) {
-    return NextResponse.json({ ok: false, message: 'Too many requests' }, { status: 429 });
+    return NextResponse.json(
+      { ok: false, message: 'Too many requests' },
+      { status: 429 },
+    );
   }
 
-  const result = await runSupplierSync();
+  let result;
+  try {
+    result = await runSupplierSync();
+  } catch {
+    return NextResponse.json(
+      {
+        ok: false,
+        message:
+          'Supplier configuration or feed is not ready. No products were changed.',
+      },
+      { status: 503 },
+    );
+  }
 
   // Audit log
-  await prisma.auditLog.create({ data: { userId, action: 'admin.sync-now', metadata: JSON.stringify(result) } });
-  return NextResponse.json(result);
+  await prisma.auditLog.create({
+    data: {
+      userId,
+      action: 'admin.sync-now',
+      metadata: JSON.stringify(result),
+    },
+  });
+  return NextResponse.json(result, { status: result.errors ? 502 : 200 });
 }
-
-
-

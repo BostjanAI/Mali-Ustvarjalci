@@ -1,129 +1,412 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
-import { productSchema, productImageSchema } from '@/lib/schemas/product';
-
-async function updateProduct(formData: FormData) {
+import { redirect } from 'next/navigation';
+import { requireAdmin } from '@/lib/requireAdmin';
+import { CATEGORIES } from '@/lib/catalog';
+import {
+  parseProductDetails,
+  productDetailsSchema,
+  reviewIssues,
+} from '@/lib/productDetails';
+import { safeParseJsonArray } from '@/lib/utils';
+import { z } from 'zod';
+const imageSchema = z
+  .array(
+    z
+      .string()
+      .url()
+      .refine((url) => new URL(url).protocol === 'https:'),
+  )
+  .max(20);
+const text = (form: FormData, key: string) =>
+  String(form.get(key) || '').trim();
+const optionalMonths = (form: FormData, key: string) =>
+  text(form, key) === '' ? null : Number(text(form, key));
+const localeOf = (form: FormData) =>
+  form.get('locale') === 'en' ? 'en' : 'sl';
+async function saveProduct(form: FormData) {
   'use server';
-  const id = String(formData.get('id'));
-  const locale = String(formData.get('locale') || 'sl');
-  
-  try {
-    const data = {
-      title: String(formData.get('title') || ''),
-      priceCents: parseInt(String(formData.get('priceCents') || '0'), 10),
-      active: String(formData.get('active') || 'true') === 'true',
-      supplierManaged: String(formData.get('supplierManaged') || 'true') === 'true',
-    };
-
-    const validated = productSchema.parse(data);
-    
-    await prisma.product.update({
-      where: { id },
-      data: {
-        title: validated.title,
-        priceCents: validated.priceCents,
-        active: validated.active,
-        supplierManaged: validated.supplierManaged,
-      },
+  await requireAdmin();
+  const locale = localeOf(form);
+  const target = '/' + locale + '/admin/products';
+  const product = await prisma.product.findUnique({
+    where: { id: text(form, 'id') },
+  });
+  if (!product) redirect(target + '?notice=not-found');
+  const basic = z
+    .object({
+      title: z.string().min(1).max(500),
+      priceCents: z.number().int().positive(),
+      categoryPath: z
+        .string()
+        .refine((value) => !value || CATEGORIES.some((c) => c.id === value)),
+    })
+    .safeParse({
+      title: text(form, 'title'),
+      priceCents: Number(text(form, 'priceCents')),
+      categoryPath: text(form, 'categoryPath'),
     });
-    revalidatePath(`/${locale}/admin/products`);
-  } catch (error: any) {
-    console.error('Update product error:', error);
-  }
+  const details = productDetailsSchema.safeParse({
+    minAgeMonths: optionalMonths(form, 'minAgeMonths'),
+    maxAgeMonths: optionalMonths(form, 'maxAgeMonths'),
+    ageLabel: text(form, 'ageLabel'),
+    warnings: text(form, 'warnings'),
+    instructionsUrl: text(form, 'instructionsUrl'),
+    instructionsLanguage: text(form, 'instructionsLanguage'),
+    manufacturer: {
+      name: text(form, 'manufacturerName'),
+      address: text(form, 'manufacturerAddress'),
+      email: text(form, 'manufacturerEmail'),
+    },
+    euResponsiblePerson: {
+      name: text(form, 'responsiblePersonName'),
+      address: text(form, 'responsiblePersonAddress'),
+      email: text(form, 'responsiblePersonEmail'),
+    },
+    sourceUrl: text(form, 'sourceUrl'),
+    imageRightsSource: text(form, 'imageRightsSource'),
+  });
+  const images = imageSchema.safeParse(
+    text(form, 'images')
+      .split(/\r?\n/)
+      .map((url) => url.trim())
+      .filter(Boolean),
+  );
+  if (!basic.success || !details.success || !images.success)
+    redirect(target + '?notice=invalid');
+  const oldDetails = parseProductDetails(product.detailsJson);
+  const imagesChanged =
+    JSON.stringify(images.data) !==
+      JSON.stringify(safeParseJsonArray(product.imagesJson)) ||
+    details.data.imageRightsSource !== oldDetails.imageRightsSource;
+  const imageDate = imagesChanged
+    ? form.get('imagesConfirmed') === 'on'
+      ? new Date()
+      : null
+    : product.imagesVerifiedAt ||
+      (form.get('imagesConfirmed') === 'on' ? new Date() : null);
+  const wantsActive = form.get('active') === 'on';
+  const issues = reviewIssues(details.data, images.data, !!imageDate);
+  if (!basic.data.categoryPath) issues.push('category');
+  if (wantsActive && (form.get('contentConfirmed') !== 'on' || issues.length))
+    redirect(target + '?notice=review-required');
+  const stockConfirmed = form.get('stockConfirmed') === 'on';
+  const quantity = text(form, 'quantity');
+  if (stockConfirmed && (!/^\d+$/.test(quantity) || Number(quantity) > 1000000))
+    redirect(target + '?notice=invalid-stock');
+  await prisma.product.update({
+    where: { id: product.id },
+    data: {
+      title: basic.data.title,
+      priceCents: basic.data.priceCents,
+      description: text(form, 'description') || null,
+      categoryPath: basic.data.categoryPath || null,
+      detailsJson: JSON.stringify(details.data),
+      imagesJson: JSON.stringify(images.data),
+      imagesVerifiedAt: imageDate,
+      active: wantsActive,
+      catalogReviewedAt: wantsActive ? new Date() : null,
+      supplierManaged: form.get('supplierManaged') === 'on',
+      ...(stockConfirmed
+        ? {
+            inventory: {
+              upsert: {
+                update: { quantity: Number(quantity), syncedAt: new Date() },
+                create: { quantity: Number(quantity), syncedAt: new Date() },
+              },
+            },
+          }
+        : {}),
+    },
+  });
+  revalidatePath(target);
+  revalidatePath('/' + locale);
+  revalidatePath('/' + locale + '/shop');
+  revalidatePath('/' + locale + '/shop/' + product.slug);
+  redirect(target + '?notice=saved');
 }
-
-async function addImage(formData: FormData) {
-  'use server';
-  const id = String(formData.get('id'));
-  const locale = String(formData.get('locale') || 'sl');
-  const url = String(formData.get('url') || '');
-  
-  try {
-    const validated = productImageSchema.parse({ url });
-    
-    const p = await prisma.product.findUnique({ where: { id }, select: { imagesJson: true } });
-    const images = p?.imagesJson ? (JSON.parse(p.imagesJson) as string[]) : [];
-    if (!images.includes(validated.url)) images.push(validated.url);
-    await prisma.product.update({ where: { id }, data: { imagesJson: JSON.stringify(images) } });
-    revalidatePath(`/${locale}/admin/products`);
-  } catch (error: any) {
-    console.error('Add image error:', error);
-  }
-}
-
-async function clearImages(formData: FormData) {
-  'use server';
-  const id = String(formData.get('id'));
-  const locale = String(formData.get('locale') || 'sl');
-  
-  try {
-    await prisma.product.update({ where: { id }, data: { imagesJson: null } });
-    revalidatePath(`/${locale}/admin/products`);
-  } catch (error: any) {
-    console.error('Clear images error:', error);
-  }
-}
-
-export default async function AdminProductsPage({ params }: { params: { locale: string } }) {
-  const locale = params.locale || 'sl';
-  const products = await prisma.product.findMany({ orderBy: { createdAt: 'desc' }, take: 100 });
+export default async function AdminProductsPage({
+  params,
+  searchParams,
+}: {
+  params: { locale: string };
+  searchParams: { notice?: string };
+}) {
+  await requireAdmin();
+  const locale = params.locale === 'en' ? 'en' : 'sl';
+  const en = locale === 'en';
+  const products = await prisma.product.findMany({
+    orderBy: { updatedAt: 'desc' },
+    take: 100,
+    include: { inventory: true, supplier: { select: { name: true } } },
+  });
+  const notices: Record<string, string> = {
+    saved: en ? 'Product saved.' : 'Izdelek je shranjen.',
+    invalid: en
+      ? 'Check the product values and HTTPS links.'
+      : 'Preveri podatke in povezave HTTPS.',
+    'review-required': en
+      ? 'To publish, select a category and confirm complete age, warning, Slovenian instruction, manufacturer, source and image information.'
+      : 'Za objavo izberi kategorijo in potrdi popolne podatke o starosti, opozorilih, slovenskih navodilih, proizvajalcu, viru in slikah.',
+    'invalid-stock': en
+      ? 'Enter a confirmed whole-number stock quantity.'
+      : 'Vnesi potrjeno celoštevilčno količino zaloge.',
+    'not-found': en ? 'Product not found.' : 'Izdelka ni mogoče najti.',
+  };
   return (
-    <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Products</h1>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left border-b">
-            <th className="py-2">Title</th>
-            <th>Price</th>
-            <th>Active</th>
-            <th>Supplier-managed</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {products.map((p) => (
-            <tr key={p.id} className="border-b">
-              <td className="py-2">
-                <form action={updateProduct} className="flex gap-2 items-center flex-wrap">
-                  <input type="hidden" name="id" value={p.id} />
-                  <input type="hidden" name="locale" value={locale} />
-                  <input name="title" defaultValue={p.title} className="border rounded px-2 py-1 w-64" />
-                  <input name="priceCents" defaultValue={String(p.priceCents)} className="border rounded px-2 py-1 w-28" />
-                  <select name="active" defaultValue={String(p.active)} className="border rounded px-2 py-1">
-                    <option value="true">Active</option>
-                    <option value="false">Inactive</option>
+    <div className="catalog-admin">
+      <h1 className="text-2xl font-semibold">
+        {en ? 'Catalogue review' : 'Pregled kataloga'}
+      </h1>
+      <p className="admin-meta">
+        {en
+          ? 'Supplier imports remain drafts until product information and image usage are reviewed. Empty stock values are not a stock confirmation.'
+          : 'Uvoženi izdelki ostanejo osnutki, dokler niso pregledani podatki in uporaba slik. Prazen podatek o zalogi ne pomeni potrjene količine.'}
+      </p>
+      {searchParams.notice && notices[searchParams.notice] && (
+        <p role="status" className="admin-message">
+          {notices[searchParams.notice]}
+        </p>
+      )}
+      {products.map((product) => {
+        const d = parseProductDetails(product.detailsJson);
+        const fields = [
+          [
+            'manufacturerName',
+            en ? 'Manufacturer' : 'Proizvajalec',
+            d.manufacturer.name,
+          ],
+          [
+            'manufacturerAddress',
+            en ? 'Manufacturer address' : 'Naslov proizvajalca',
+            d.manufacturer.address,
+          ],
+          [
+            'manufacturerEmail',
+            en ? 'Manufacturer email' : 'E-pošta proizvajalca',
+            d.manufacturer.email,
+          ],
+          [
+            'responsiblePersonName',
+            en ? 'EU responsible person' : 'Odgovorna oseba v EU',
+            d.euResponsiblePerson.name,
+          ],
+          [
+            'responsiblePersonAddress',
+            en
+              ? 'EU responsible person address'
+              : 'Naslov odgovorne osebe v EU',
+            d.euResponsiblePerson.address,
+          ],
+          [
+            'responsiblePersonEmail',
+            en ? 'EU responsible person email' : 'E-pošta odgovorne osebe v EU',
+            d.euResponsiblePerson.email,
+          ],
+          [
+            'sourceUrl',
+            en
+              ? 'Supplier product source (HTTPS)'
+              : 'Vir izdelka pri dobavitelju (HTTPS)',
+            d.sourceUrl,
+          ],
+          [
+            'imageRightsSource',
+            en
+              ? 'Image rights evidence/source'
+              : 'Dokazilo ali vir pravice uporabe slik',
+            d.imageRightsSource,
+          ],
+        ];
+        return (
+          <article key={product.id}>
+            <h2>{product.title}</h2>
+            <p className="admin-meta">
+              ID: {product.id} · {en ? 'Supplier' : 'Dobavitelj'}:{' '}
+              {product.supplier?.name || '—'}
+              <br />
+              {en ? 'Original category' : 'Izvirna kategorija'}:{' '}
+              {product.supplierCategoryPath || '—'}
+              <br />
+              {en ? 'Stock last confirmed' : 'Zaloga nazadnje potrjena'}:{' '}
+              {product.inventory?.syncedAt?.toLocaleString('sl-SI', {
+                timeZone: 'Europe/Ljubljana',
+              }) || '—'}
+            </p>
+            <form action={saveProduct}>
+              <input type="hidden" name="id" value={product.id} />
+              <input type="hidden" name="locale" value={locale} />
+              <div className="admin-grid">
+                <label>
+                  {en ? 'Product name' : 'Ime izdelka'}
+                  <input
+                    name="title"
+                    defaultValue={product.title}
+                    required
+                    maxLength={500}
+                  />
+                </label>
+                <label>
+                  {en
+                    ? 'Selling price in cents (EUR)'
+                    : 'Prodajna cena v centih (EUR)'}
+                  <input
+                    name="priceCents"
+                    type="number"
+                    min="1"
+                    step="1"
+                    defaultValue={product.priceCents}
+                    required
+                  />
+                </label>
+                <label>
+                  {en ? 'Store category' : 'Kategorija trgovine'}
+                  <select
+                    name="categoryPath"
+                    defaultValue={product.categoryPath || ''}
+                  >
+                    <option value="">{en ? 'Unmapped' : 'Nepreslikano'}</option>
+                    {CATEGORIES.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {en ? c.en : c.sl}
+                      </option>
+                    ))}
                   </select>
-                  <select name="supplierManaged" defaultValue={String(p.supplierManaged)} className="border rounded px-2 py-1">
-                    <option value="true">Supplier</option>
-                    <option value="false">Local</option>
+                </label>
+                <label>
+                  {en
+                    ? 'Age label from supplier'
+                    : 'Starostna oznaka dobavitelja'}
+                  <input name="ageLabel" defaultValue={d.ageLabel} />
+                </label>
+                <label>
+                  {en ? 'Minimum age in months' : 'Najnižja starost v mesecih'}
+                  <input
+                    name="minAgeMonths"
+                    type="number"
+                    min="0"
+                    max="216"
+                    defaultValue={d.minAgeMonths ?? ''}
+                  />
+                </label>
+                <label>
+                  {en
+                    ? 'Maximum age in months (optional)'
+                    : 'Najvišja starost v mesecih (neobvezno)'}
+                  <input
+                    name="maxAgeMonths"
+                    type="number"
+                    min="0"
+                    max="216"
+                    defaultValue={d.maxAgeMonths ?? ''}
+                  />
+                </label>
+                <label className="wide">
+                  {en ? 'Description' : 'Opis'}
+                  <textarea
+                    name="description"
+                    defaultValue={product.description || ''}
+                  />
+                </label>
+                <label className="wide">
+                  {en
+                    ? 'Supplier warnings and safety information'
+                    : 'Dobaviteljeva opozorila in varnostni podatki'}
+                  <textarea name="warnings" defaultValue={d.warnings} />
+                </label>
+                <label>
+                  {en
+                    ? 'Instructions URL (HTTPS)'
+                    : 'Povezava do navodil (HTTPS)'}
+                  <input
+                    name="instructionsUrl"
+                    type="url"
+                    defaultValue={d.instructionsUrl}
+                  />
+                </label>
+                <label>
+                  {en ? 'Instructions language' : 'Jezik navodil'}
+                  <select
+                    name="instructionsLanguage"
+                    defaultValue={d.instructionsLanguage}
+                  >
+                    <option value="">—</option>
+                    <option value="sl">Slovenščina</option>
+                    <option value="en">English</option>
+                    <option value="other">{en ? 'Other' : 'Drugo'}</option>
                   </select>
-                  <button className="border px-3 py-1 rounded">Save</button>
-                </form>
-                <div className="text-xs text-gray-600 mt-2">Images: {(p as any).imagesJson || '[]'}</div>
-                <div className="flex items-center gap-2 mt-2">
-                  <form action={addImage} className="flex items-center gap-2">
-                    <input type="hidden" name="id" value={p.id} />
-                    <input type="hidden" name="locale" value={locale} />
-                    <input name="url" placeholder="https://..." className="border rounded px-2 py-1 w-72" />
-                    <button className="border px-3 py-1 rounded">Add image</button>
-                  </form>
-                  <form action={clearImages}>
-                    <input type="hidden" name="id" value={p.id} />
-                    <input type="hidden" name="locale" value={locale} />
-                    <button className="text-red-600">Clear images</button>
-                  </form>
-                </div>
-              </td>
-              <td>€{(p.priceCents / 100).toFixed(2)}</td>
-              <td>{p.active ? 'Yes' : 'No'}</td>
-              <td>{p.supplierManaged ? 'Yes' : 'No'}</td>
-              <td></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                </label>
+                {fields.map(([name, label, value]) => (
+                  <label key={name}>
+                    {label}
+                    <input name={name} defaultValue={value} />
+                  </label>
+                ))}
+                <label className="wide">
+                  {en
+                    ? 'Image URLs (one HTTPS link per line)'
+                    : 'Povezave do slik (ena povezava HTTPS na vrstico)'}
+                  <textarea
+                    name="images"
+                    defaultValue={safeParseJsonArray(product.imagesJson).join(
+                      '\n',
+                    )}
+                  />
+                </label>
+                <label>
+                  {en ? 'Confirmed stock quantity' : 'Potrjena količina zaloge'}
+                  <input
+                    type="number"
+                    min="0"
+                    max="1000000"
+                    name="quantity"
+                    defaultValue={product.inventory?.quantity ?? ''}
+                  />
+                </label>
+              </div>
+              <label className="admin-check">
+                <input type="checkbox" name="stockConfirmed" />
+                {en
+                  ? 'I have just verified the entered stock quantity.'
+                  : 'Pravkar sem preveril vneseno količino zaloge.'}
+              </label>
+              <label className="admin-check">
+                <input type="checkbox" name="imagesConfirmed" />
+                {en
+                  ? 'I reviewed these images and their usage rights.'
+                  : 'Preveril sem te slike in pravico do njihove uporabe.'}
+              </label>
+              <label className="admin-check">
+                <input type="checkbox" name="contentConfirmed" />
+                {en
+                  ? 'I reviewed the product information against the supplier documentation.'
+                  : 'Podatke izdelka sem preveril v dobaviteljevi dokumentaciji.'}
+              </label>
+              <label className="admin-check">
+                <input
+                  type="checkbox"
+                  name="supplierManaged"
+                  defaultChecked={product.supplierManaged}
+                />
+                {en
+                  ? 'Update this product from supplier feed'
+                  : 'Izdelek posodabljaj iz dobaviteljevega vira'}
+              </label>
+              <label className="admin-check">
+                <input
+                  type="checkbox"
+                  name="active"
+                  defaultChecked={product.active}
+                />
+                {en ? 'Publish reviewed product' : 'Objavi pregledan izdelek'}
+              </label>
+              <button className="primary-btn">
+                {en ? 'Save product' : 'Shrani izdelek'}
+              </button>
+            </form>
+          </article>
+        );
+      })}
     </div>
   );
 }
-
-

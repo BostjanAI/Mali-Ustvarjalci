@@ -3,12 +3,15 @@ import { forwardOrderToSupplier } from '@/lib/supplierForward';
 import { revalidatePath } from 'next/cache';
 import { formatCurrencyCents } from '@/lib/i18n';
 import { redirect } from 'next/navigation';
+import { requireAdmin } from '@/lib/requireAdmin';
+import { readShippingAddress } from '@/lib/orderDelivery';
 
 async function retryForward(formData: FormData) {
   'use server';
+  await requireAdmin();
   const id = String(formData.get('id'));
   const locale = String(formData.get('locale') || 'sl');
-  
+
   try {
     await forwardOrderToSupplier(id);
     revalidatePath(`/${locale}/admin/orders`);
@@ -21,19 +24,22 @@ async function refundOrder(formData: FormData) {
   'use server';
   const orderId = String(formData.get('orderId'));
   const locale = String(formData.get('locale') || 'sl');
-  
+
   try {
-    const response = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/admin/refund`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId }),
-    });
-    
+    const response = await fetch(
+      `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/admin/refund`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId }),
+      },
+    );
+
     if (!response.ok) {
       const data = await response.json();
       throw new Error(data.error || 'Refund failed');
     }
-    
+
     revalidatePath(`/${locale}/admin/orders`);
   } catch (error: any) {
     console.error('Refund error:', error);
@@ -47,7 +53,8 @@ export default async function OrdersPage({
   params: { locale: string };
   searchParams: { status?: string; search?: string };
 }) {
-  const locale = params.locale || 'sl';
+  await requireAdmin();
+  const locale = params.locale === 'en' ? 'en' : 'sl';
   const statusFilter = searchParams.status;
   const searchQuery = searchParams.search?.trim();
 
@@ -66,6 +73,9 @@ export default async function OrdersPage({
     where,
     orderBy: { createdAt: 'desc' },
     take: 100,
+    include: {
+      dispatches: { include: { supplier: { select: { name: true } } } },
+    },
   });
 
   const statusCounts = await prisma.order.groupBy({
@@ -84,7 +94,10 @@ export default async function OrdersPage({
 
       <div className="bg-white p-4 rounded-lg border space-y-4">
         <div className="flex gap-2 flex-wrap">
-          <FilterButton href={`/${locale}/admin/orders`} active={!statusFilter || statusFilter === 'all'}>
+          <FilterButton
+            href={`/${locale}/admin/orders`}
+            active={!statusFilter || statusFilter === 'all'}
+          >
             All ({statusCounts.reduce((sum, s) => sum + s._count.status, 0)})
           </FilterButton>
           {statusCounts.map((s) => (
@@ -107,7 +120,10 @@ export default async function OrdersPage({
             placeholder="Search by email or order ID..."
             className="flex-1 border rounded-lg px-3 py-2 text-sm"
           />
-          <button type="submit" className="bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 transition-colors text-sm">
+          <button
+            type="submit"
+            className="bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 transition-colors text-sm"
+          >
             Search
           </button>
         </form>
@@ -118,7 +134,7 @@ export default async function OrdersPage({
           <thead className="bg-gray-50">
             <tr className="text-left border-b">
               <th className="py-3 px-4 font-semibold">Created</th>
-              <th className="py-3 px-4 font-semibold">Email</th>
+              <th className="py-3 px-4 font-semibold">Email / Dostava</th>
               <th className="py-3 px-4 font-semibold">Total</th>
               <th className="py-3 px-4 font-semibold">Status</th>
               <th className="py-3 px-4 font-semibold">Supplier</th>
@@ -134,7 +150,10 @@ export default async function OrdersPage({
               </tr>
             ) : (
               orders.map((o) => (
-                <tr key={o.id} className="border-b hover:bg-gray-50 transition-colors">
+                <tr
+                  key={o.id}
+                  className="border-b hover:bg-gray-50 transition-colors"
+                >
                   <td className="py-3 px-4 text-gray-600">
                     {new Date(o.createdAt).toLocaleDateString('sl-SI', {
                       day: '2-digit',
@@ -144,38 +163,62 @@ export default async function OrdersPage({
                       minute: '2-digit',
                     })}
                   </td>
-                  <td className="py-3 px-4">{o.email}</td>
-                  <td className="py-3 px-4 font-semibold">{formatCurrencyCents(o.totalCents, 'sl-SI')}</td>
+                  <td className="py-3 px-4">
+                    <p>{o.email}</p>
+                    <DeliveryAddress json={o.shippingAddressJson} />
+                    {o.fulfillmentHold && (
+                      <p className="text-red-700 mt-2">
+                        {locale === 'en'
+                          ? 'Manual review required'
+                          : 'Potreben je ročni pregled'}
+                        : {o.fulfillmentHold}
+                      </p>
+                    )}
+                  </td>
+                  <td className="py-3 px-4 font-semibold">
+                    {formatCurrencyCents(o.totalCents, 'sl-SI')}
+                  </td>
                   <td className="py-3 px-4">
                     <span
                       className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
                         o.status === 'paid' || o.status === 'completed'
                           ? 'bg-green-100 text-green-700'
                           : o.status === 'pending'
-                          ? 'bg-yellow-100 text-yellow-700'
-                          : o.status === 'cancelled'
-                          ? 'bg-red-100 text-red-700'
-                          : 'bg-gray-100 text-gray-700'
+                            ? 'bg-yellow-100 text-yellow-700'
+                            : o.status === 'cancelled'
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-gray-100 text-gray-700'
                       }`}
                     >
                       {o.status}
                     </span>
                   </td>
                   <td className="py-3 px-4">
-                    {o.supplierStatus ? (
-                      <span
-                        className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
-                          o.supplierStatus === 'forwarded' || o.supplierStatus === 'completed'
-                            ? 'bg-blue-100 text-blue-700'
-                            : o.supplierStatus === 'failed'
-                            ? 'bg-red-100 text-red-700'
-                            : 'bg-gray-100 text-gray-700'
-                        }`}
-                      >
-                        {o.supplierStatus}
-                      </span>
+                    {o.dispatches.length ? (
+                      o.dispatches.map((d) => (
+                        <div key={d.id} className="mb-3">
+                          <strong>{d.supplier.name}</strong>
+                          <p>
+                            {d.status} · {d.supplierStatus || '—'}
+                          </p>
+                          {d.supplierOrderId && <p>ID: {d.supplierOrderId}</p>}
+                          {d.trackingNumber && (
+                            <p>
+                              {locale === 'en' ? 'Tracking' : 'Sledenje'}:{' '}
+                              {d.trackingNumber}
+                            </p>
+                          )}
+                          {d.lastError && (
+                            <p className="text-red-700">{d.lastError}</p>
+                          )}
+                          <p>
+                            {locale === 'en' ? 'Attempts' : 'Poskusi'}:{' '}
+                            {d.attempts}
+                          </p>
+                        </div>
+                      ))
                     ) : (
-                      <span className="text-gray-400">—</span>
+                      <span>{o.supplierStatus || '—'}</span>
                     )}
                   </td>
                   <td className="py-3 px-4">
@@ -183,7 +226,14 @@ export default async function OrdersPage({
                       <form action={retryForward}>
                         <input type="hidden" name="id" value={o.id} />
                         <input type="hidden" name="locale" value={locale} />
-                        <button className="border border-blue-300 text-blue-700 px-3 py-1 rounded hover:bg-blue-50 transition-colors text-xs">
+                        <button
+                          disabled={
+                            o.status !== 'paid' ||
+                            !!o.fulfillmentHold ||
+                            !o.stripeCheckoutSessionId
+                          }
+                          className="disabled:opacity-40 border border-blue-300 text-blue-700 px-3 py-1 rounded hover:bg-blue-50 transition-colors text-xs"
+                        >
                           Retry
                         </button>
                       </form>
@@ -206,7 +256,15 @@ export default async function OrdersPage({
   );
 }
 
-function FilterButton({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+function FilterButton({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <a
       href={href}
@@ -221,9 +279,24 @@ function FilterButton({ href, active, children }: { href: string; active: boolea
   );
 }
 
-
-
-
-
-
-
+function DeliveryAddress({ json }: { json: string | null }) {
+  const a = readShippingAddress(json);
+  if (!a)
+    return (
+      <p className="text-amber-800 mt-2">
+        Dostavni naslov ni potrjen / Delivery address not confirmed
+      </p>
+    );
+  return (
+    <address className="not-italic text-gray-600 mt-2">
+      <p>{a.name}</p>
+      <p>{a.line1}</p>
+      {a.line2 && <p>{a.line2}</p>}
+      <p>
+        {a.postalCode} {a.city}
+      </p>
+      <p>{[a.state, a.country].filter(Boolean).join(', ')}</p>
+      <p>{a.phone}</p>
+    </address>
+  );
+}

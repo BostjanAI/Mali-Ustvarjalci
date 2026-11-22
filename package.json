@@ -19,7 +19,8 @@
     "sync:supplier": "tsx scripts/syncSupplierProducts.ts",
     "import:products": "tsx scripts/importProducts.ts",
     "verify:storefront": "node scripts/verify-storefront.cjs",
-    "verify:catalog": "node scripts/verify-catalog.cjs"
+    "verify:catalog": "node scripts/verify-catalog.cjs",
+    "verify:dropshipping": "node scripts/verify-dropshipping.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

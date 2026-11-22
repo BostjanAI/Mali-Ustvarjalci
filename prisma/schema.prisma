@@ -67,11 +67,15 @@ model Supplier {
   name          String
   apiUrl        String?
   authToken     String?
+  orderAuthToken String?
+  orderWebhookToken String?
+  orderForwardingEnabled Boolean @default(false)
   syncFrequency String? // cron-like string or enum
   active        Boolean @default(true)
   feedUrl       String?
   lastSyncedAt  DateTime?
 
+  dispatches SupplierDispatch[]
   products Product[]
   syncLogs SyncLog[]
 
@@ -145,6 +149,9 @@ model Order {
   totalCents            Int
   currency              String  @default("EUR")
   vatRate               Int     @default(22)
+  stripeCheckoutSessionId String? @unique
+  shippingAddressJson String?
+  fulfillmentHold String?
   stripePaymentIntentId String?
   status                String  @default("created")
 
@@ -153,6 +160,7 @@ model Order {
   supplierStatus        String?   @default("pending")
   supplierId            String?
 
+  dispatches SupplierDispatch[]
   items OrderItem[]
 
   createdAt DateTime @default(now())
@@ -170,6 +178,8 @@ model OrderItem {
   orderId        String
   productId      String
   variantId      String?
+  supplierId     String?
+  supplierProductId String?
   title          String
   sku            String?
   unitPriceCents Int
@@ -202,4 +212,27 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   user User? @relation(fields: [userId], references: [id])
+}
+
+model SupplierDispatch {
+  id String @id @default(cuid())
+  orderId String
+  supplierId String
+  requestJson String
+  endpointUrl String?
+  status String @default("pending")
+  supplierOrderId String?
+  supplierStatus String?
+  trackingNumber String?
+  attempts Int @default(0)
+  lastAttemptAt DateTime?
+  sentAt DateTime?
+  lastError String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  supplier Supplier @relation(fields: [supplierId], references: [id])
+  @@unique([orderId, supplierId])
+  @@unique([supplierId, supplierOrderId])
+  @@index([status, lastAttemptAt])
 }

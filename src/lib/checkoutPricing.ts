@@ -7,6 +7,8 @@ export type PricedProduct = {
   title: string;
   priceCents: number;
   currency: string;
+  supplierId?: string | null;
+  supplierProductId?: string | null;
   inventory?: { quantity: number; syncedAt?: Date | string | null } | null;
 };
 export function priceCart(items: RequestedItem[], products: PricedProduct[]) {
@@ -48,6 +50,8 @@ export function priceCart(items: RequestedItem[], products: PricedProduct[]) {
       title: product.title,
       priceCents: product.priceCents,
       quantity,
+      supplierId: product.supplierId ?? null,
+      supplierProductId: product.supplierProductId ?? null,
     };
   });
 }

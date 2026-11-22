@@ -7,6 +7,7 @@ import { checkoutSchema } from '@/lib/schemas/checkout';
 import { priceCart, cartMetadata } from '@/lib/checkoutPricing';
 import { businessReady } from '@/lib/business';
 import { publishedProducts } from '@/lib/catalogProduct';
+import { deliveryCountries } from '@/lib/orderDelivery';
 const schema = z.object({
   items: z
     .array(
@@ -57,6 +58,8 @@ export async function POST(req: NextRequest) {
         title: true,
         priceCents: true,
         currency: true,
+        supplierId: true,
+        supplierProductId: true,
         inventory: { select: { quantity: true, syncedAt: true } },
       },
     });
@@ -91,7 +94,9 @@ export async function POST(req: NextRequest) {
         origin + '/' + locale + '/thank-you?session_id={CHECKOUT_SESSION_ID}',
       cancel_url: origin + '/' + locale + '/checkout',
       allow_promotion_codes: true,
+      phone_number_collection: { enabled: true },
       metadata: {
+        checkout_version: '2',
         ...cartMetadata(cart),
         firstName: shipping.firstName,
         lastName: shipping.lastName,
@@ -103,7 +108,7 @@ export async function POST(req: NextRequest) {
         email,
       },
       shipping_address_collection: {
-        allowed_countries: ['SI', 'AT', 'DE', 'HR', 'IT'],
+        allowed_countries: [...deliveryCountries],
       },
       shipping_options: [
         {

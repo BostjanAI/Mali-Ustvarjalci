@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/requireAdmin';
 import { runSupplierSync } from '@/lib/supplierSync';
+import { validOrderEndpoint } from '@/lib/supplierOrderApi';
 const formSchema = z.object({
   name: z.string().trim().min(1).max(250),
   feedUrl: z
@@ -31,11 +32,35 @@ async function saveSupplier(form: FormData) {
   const id = value(form, 'id');
   const token = value(form, 'authToken');
   const active = form.get('active') === 'on';
+  const apiUrl = value(form, 'apiUrl');
+  const orderToken = value(form, 'orderAuthToken');
+  const webhookToken = value(form, 'orderWebhookToken');
+  const orderForwardingEnabled = form.get('orderForwardingEnabled') === 'on';
+  const previous = id
+    ? await prisma.supplier.findUnique({ where: { id } })
+    : null;
+  const finalOrderToken =
+    form.get('clearOrderToken') === 'on'
+      ? null
+      : orderToken || previous?.orderAuthToken || null;
+  const finalWebhookToken =
+    form.get('clearWebhookToken') === 'on'
+      ? null
+      : webhookToken || previous?.orderWebhookToken || null;
+  if (
+    (apiUrl && !validOrderEndpoint(apiUrl)) ||
+    (orderForwardingEnabled && (!apiUrl || !finalOrderToken))
+  )
+    redirect(target + '?notice=order-api-invalid');
   const data = {
     name: parsed.data.name,
     feedUrl: parsed.data.feedUrl,
     syncFrequency: parsed.data.frequency,
     active,
+    apiUrl: apiUrl || null,
+    orderAuthToken: finalOrderToken,
+    orderWebhookToken: finalWebhookToken,
+    orderForwardingEnabled,
     ...(token ? { authToken: token } : {}),
   };
   if (id) {
@@ -81,6 +106,9 @@ export default async function SuppliersPage({
     orderBy: { createdAt: 'desc' },
   });
   const notices: Record<string, string> = {
+    'order-api-invalid': en
+      ? 'Enter a real HTTPS order endpoint without credentials/query strings and a dedicated order token before enabling forwarding.'
+      : 'Pred vklopom posredovanja vnesi pravi HTTPS naslov za naročila brez ključev v povezavi in ločen ključ za naročila.',
     invalid: en
       ? 'Enter a supplier name and valid HTTPS feed.'
       : 'Vnesi naziv dobavitelja in veljaven vir HTTPS.',
@@ -137,6 +165,7 @@ export default async function SuppliersPage({
               </select>
             </label>
           </div>
+          <OrderApiFields en={en} />
           <label className="admin-check">
             <input name="active" type="checkbox" defaultChecked />
             {en ? 'Enabled' : 'Omogočen'}
@@ -202,6 +231,11 @@ export default async function SuppliersPage({
                 </select>
               </label>
             </div>
+            <OrderApiFields
+              en={en}
+              endpoint={s.apiUrl}
+              enabled={s.orderForwardingEnabled}
+            />
             <label className="admin-check">
               <input name="active" type="checkbox" defaultChecked={s.active} />
               {en
@@ -215,5 +249,78 @@ export default async function SuppliersPage({
         </article>
       ))}
     </div>
+  );
+}
+
+function OrderApiFields({
+  en,
+  endpoint,
+  enabled = false,
+}: {
+  en: boolean;
+  endpoint?: string | null;
+  enabled?: boolean;
+}) {
+  return (
+    <fieldset className="space-y-4 mt-6">
+      <legend className="font-semibold">
+        {en ? 'Order forwarding' : 'Posredovanje naročil'}
+      </legend>
+      <p className="admin-meta">
+        {en
+          ? 'Enable only after testing the v1 order contract and durable Idempotency-Key support with this supplier. Feed credentials are separate.'
+          : 'Vklopi po preizkusu pogodbe naročil v1 in trajnega preprečevanja dvojnih naročil z Idempotency-Key pri tem dobavitelju. Ključ kataloga je ločen.'}
+      </p>
+      <div className="admin-grid">
+        <label>
+          {en ? 'Order endpoint (HTTPS)' : 'Naslov API za naročila (HTTPS)'}
+          <input name="apiUrl" type="url" defaultValue={endpoint || ''} />
+        </label>
+        <label>
+          {en
+            ? 'Order API token (empty keeps saved)'
+            : 'Ključ za naročila (prazno ohrani shranjenega)'}
+          <input
+            name="orderAuthToken"
+            type="password"
+            autoComplete="new-password"
+            maxLength={2000}
+          />
+        </label>
+        <label>
+          {en
+            ? 'Callback token (empty keeps saved)'
+            : 'Ključ povratnih obvestil (prazno ohrani shranjenega)'}
+          <input
+            name="orderWebhookToken"
+            type="password"
+            autoComplete="new-password"
+            maxLength={2000}
+          />
+        </label>
+      </div>
+      <label className="admin-check">
+        <input name="clearOrderToken" type="checkbox" />
+        {en
+          ? 'Remove saved order token'
+          : 'Odstrani shranjen ključ za naročila'}
+      </label>
+      <label className="admin-check">
+        <input name="clearWebhookToken" type="checkbox" />
+        {en
+          ? 'Remove saved callback token'
+          : 'Odstrani shranjen ključ povratnih obvestil'}
+      </label>
+      <label className="admin-check">
+        <input
+          name="orderForwardingEnabled"
+          type="checkbox"
+          defaultChecked={enabled}
+        />
+        {en
+          ? 'Enable forwarding; the supplier supports the tested v1 contract and stable idempotency keys.'
+          : 'Omogoči posredovanje; dobavitelj podpira preizkušeno pogodbo v1 in stalne ključe za preprečevanje podvojenih naročil.'}
+      </label>
+    </fieldset>
   );
 }

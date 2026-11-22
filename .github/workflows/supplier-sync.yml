@@ -17,7 +17,9 @@ jobs:
     steps:
       - name: Sync production
         if: env.PROD_URL != ''
-        run: curl --fail --silent --show-error -X POST -H "x-cron-secret: $CRON_SECRET" "$PROD_URL"
+        run: |
+          curl --fail --silent --show-error -X POST -H "x-cron-secret: $CRON_SECRET" "$PROD_URL"
       - name: Sync staging
         if: env.STAGING_URL != ''
-        run: curl --fail --silent --show-error -X POST -H "x-cron-secret: ${STAGING_SECRET:-$CRON_SECRET}" "$STAGING_URL"
+        run: |
+          curl --fail --silent --show-error -X POST -H "x-cron-secret: ${STAGING_SECRET:-$CRON_SECRET}" "$STAGING_URL"

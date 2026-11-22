@@ -15,7 +15,8 @@ jobs:
     steps:
       - name: Process due fulfilments
         if: env.WORKER_URL != ''
-        run: curl --fail --silent --show-error --max-time 120 -X POST -H "x-cron-secret: $CRON_SECRET" "$WORKER_URL"
+        run: |
+          curl --fail --silent --show-error --max-time 120 -X POST -H "x-cron-secret: $CRON_SECRET" "$WORKER_URL"
       - name: Configuration pending
         if: env.WORKER_URL == ''
         run: echo "Configure FULFILLMENT_ENDPOINT_URL and CRON_SECRET to activate the worker."

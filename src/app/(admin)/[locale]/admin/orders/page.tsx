@@ -23,8 +23,8 @@ async function retryForward(formData: FormData) {
   try {
     await forwardOrderToSupplier(id, { force: true });
     revalidatePath(`/${locale}/admin/orders`);
-  } catch (error: any) {
-    console.error('Retry forward error:', error);
+  } catch {
+    console.error({ event: 'supplier_retry_failed' });
   }
 }
 

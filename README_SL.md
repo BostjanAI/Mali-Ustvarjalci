@@ -1,5 +1,7 @@
 # Mali Ustvarjalci – Dropshipping trgovina
 
+Pred prvim polnjenjem baze nastavi ADMIN_NEW_PASSWORD (vsaj 16 znakov, največ 72 bajtov). Za obstoječ račun uporabi db:set-admin-password. Testni skrbnik v razvoju zahteva ločeno MOCK_ADMIN_PASSWORD. NEXTAUTH_SECRET ustvari z generatorjem naključnih vrednosti.
+
 Tehnološki sklad: Next.js 14 (App Router), TypeScript, Tailwind, Prisma, NextAuth, Stripe, next-intl, Zustand, Zod.
 
 ## Namestitev
@@ -8,7 +10,7 @@ Tehnološki sklad: Next.js 14 (App Router), TypeScript, Tailwind, Prisma, NextAu
    - DATABASE_URL="file:./dev.db" (SQLite za lokalni razvoj) ali Postgres URL
    - NEXTAUTH_URL, NEXTAUTH_SECRET
    - AUTH_MODE=mock (opcijsko: omogoči mock avtentikacijo brez baze)
-   - MOCK_ADMIN_EMAIL=admin@example.com / MOCK_ADMIN_PASSWORD=admin123 (opcijsko)
+   - MOCK_ADMIN_EMAIL=admin@example.com / MOCK_ADMIN_PASSWORD= (opcijsko)
    - STRIPE_PUBLISHABLE_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET (za plačila)
    - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS (opcijsko)
    - SUPPLIER_FEED_URL, SUPPLIER_ORDER_URL, SUPPLIER_API_KEY
@@ -55,7 +57,7 @@ Tehnološki sklad: Next.js 14 (App Router), TypeScript, Tailwind, Prisma, NextAu
 ## Avtentikacija
 
 - Mock način (`AUTH_MODE=mock`): uporabi Credentials
-  - Admin: `admin@example.com` / `admin123` (nastavljivo)
+  - Admin: `admin@example.com` / `lokalno nastavljeno geslo` (nastavljivo)
   - Uporabnik: katerikoli email z geslom `password`
 - DB način: NextAuth + Prisma adapter (email/geslo in Google opcijsko)
 
@@ -210,7 +212,7 @@ src/
 ## Prijava
 
 **Mock način** (razvoj):
-- Admin: `admin@example.com` / `admin123`
+- Admin: `admin@example.com` / `lokalno nastavljeno geslo`
 - Uporabnik: katerikoli email / `password`
 
 **DB način** (produkcija):

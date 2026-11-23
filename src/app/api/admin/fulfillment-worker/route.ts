@@ -1,3 +1,4 @@
+import { permittedAdminOrigin } from '@/lib/security';
 import { NextResponse } from 'next/server';
 import { timingSafeEqual } from 'node:crypto';
 import { getServerSession } from 'next-auth';
@@ -5,6 +6,7 @@ import { authOptions } from '@/lib/auth';
 import { runFulfillmentWorker } from '@/lib/fulfillmentWorker';
 export const maxDuration = 120;
 export async function POST(req: Request) {
+  if (!permittedAdminOrigin(req)) return new Response('Forbidden', { status: 403 });
   const provided = req.headers.get('x-cron-secret') || '';
   const expected = process.env.CRON_SECRET || '';
   const cron =

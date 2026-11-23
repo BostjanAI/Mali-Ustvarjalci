@@ -1,3 +1,4 @@
+import { serializeJsonLd } from '@/lib/security';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
@@ -255,7 +256,7 @@ export default async function ProductDetail({
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
-            __html: JSON.stringify(jsonLd).replace(/</g, '\u003c'),
+            __html: serializeJsonLd(jsonLd),
           }}
         />
       )}

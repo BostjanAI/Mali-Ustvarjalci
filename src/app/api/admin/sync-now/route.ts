@@ -1,3 +1,4 @@
+import { permittedAdminOrigin } from '@/lib/security';
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
@@ -6,6 +7,7 @@ import { rateLimit } from '@/lib/rateLimit';
 import { runSupplierSync } from '@/lib/supplierSync';
 
 export async function POST(request: Request) {
+  if (!permittedAdminOrigin(request)) return new Response('Forbidden', { status: 403 });
   if (
     process.env.NEXT_PUBLIC_MOCK_MODE === 'true' ||
     process.env.DATABASE_URL?.startsWith('file:')

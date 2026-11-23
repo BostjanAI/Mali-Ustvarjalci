@@ -4,7 +4,7 @@ const prisma = new PrismaClient();
 
 async function main() {
   const admin = await prisma.user.findUnique({
-    where: { email: 'admin@example.com' },
+    where: { email: (process.env.ADMIN_EMAIL || 'admin@example.com').trim().toLowerCase() },
   });
   const [userCount, productCount, supplierCount] = await Promise.all([
     prisma.user.count(),
@@ -21,7 +21,7 @@ async function main() {
   );
 
   if (!admin || admin.role !== 'admin') {
-    console.error('Napaka: pričakovan admin@example.com z vlogo admin.');
+    console.error('Napaka: pričakovan uporabnik z vlogo admin.');
     process.exit(1);
   }
   if (productCount < 20) {

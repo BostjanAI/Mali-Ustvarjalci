@@ -4,7 +4,9 @@ import GoogleProvider from 'next-auth/providers/google';
 import { prisma } from '@/lib/prisma';
 import { compare } from 'bcryptjs';
 
-const isMock = process.env.AUTH_MODE === 'mock';
+import { allowMockAuth } from './security';
+
+const isMock = allowMockAuth(process.env.AUTH_MODE, process.env.NODE_ENV);
 
 // Load Prisma adapter dynamically only when needed to avoid requiring the package in mock mode
 let adapter: NextAuthOptions['adapter'] = undefined;
@@ -34,7 +36,7 @@ export const authOptions: NextAuthOptions = {
         if (!credentials?.email || !credentials.password) return null;
         if (isMock) {
           const adminEmail = process.env.MOCK_ADMIN_EMAIL || 'admin@example.com';
-          const adminPassword = process.env.MOCK_ADMIN_PASSWORD || 'admin123';
+          const adminPassword = process.env.MOCK_ADMIN_PASSWORD;
           if (credentials.email === adminEmail && credentials.password === adminPassword) {
             return { id: 'mock-admin', email: adminEmail, name: 'Admin', role: 'admin' } as any;
           }
@@ -45,9 +47,10 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
         const user = await prisma.user.findUnique({ where: { email: credentials.email } });
-        if (!user?.passwordHash) return null;
-        const ok = await compare(credentials.password, user.passwordHash);
-        if (!ok) return null;
+        if (!user?.passwordHash || !(await compare(credentials.password, user.passwordHash))) {
+          console.warn({ event: 'credentials_rejected' });
+          return null;
+        }
         return { id: user.id, email: user.email, name: user.name, role: user.role } as any;
       },
     }),
@@ -66,9 +69,23 @@ export const authOptions: NextAuthOptions = {
       return token as any;
     },
     async session({ session, token }) {
-      if (token) (session as any).user.role = (token as any).role;
+      if (session.user && token.sub) {
+        const identity = session.user as typeof session.user & { id: string; role?: string };
+        identity.id = token.sub;
+        identity.role = 'customer';
+        if (token.role === 'admin') {
+          const current = isMock ? { role: 'admin' } : await prisma.user.findUnique({
+            where: { id: token.sub }, select: { role: true },
+          });
+          identity.role = current?.role || 'customer';
+        }
+      }
       return session;
     },
+  },
+  logger: {
+    error() { console.error({ event: 'auth_error' }); },
+    warn() { console.warn({ event: 'auth_warning' }); },
   },
   secret: process.env.NEXTAUTH_SECRET,
 };

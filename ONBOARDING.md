@@ -95,7 +95,7 @@ NEXTAUTH_SECRET="your-32-char-secret-here-generate-with-openssl"
 # Mock auth (optional - simplifies local dev)
 AUTH_MODE=mock
 MOCK_ADMIN_EMAIL=admin@example.com
-MOCK_ADMIN_PASSWORD=admin123
+MOCK_ADMIN_PASSWORD=
 
 # Stripe (get test keys from Stripe dashboard)
 STRIPE_PUBLISHABLE_KEY=pk_test_...
@@ -181,7 +181,7 @@ npm run e2e  # in another terminal
 | `/sl/legal/terms` | Legal pages (placeholder content) |
 
 **Auth**: 
-- Mock mode: `admin@example.com` / `admin123` (admin) or any email / `password` (customer)
+- Mock mode: `admin@example.com` / `locally configured password` (admin) or any email / `password` (customer)
 - DB mode: Use seeded admin or create user
 
 ---
@@ -230,7 +230,7 @@ npm run e2e  # in another terminal
 3. **Verify routes**:
    - Open http://localhost:3000/sl/shop
    - Add product to cart → go to checkout
-   - Login to admin at http://localhost:3000/sl/admin (use `admin@example.com` / `admin123`)
+   - Login to admin at http://localhost:3000/sl/admin (use `admin@example.com` / `locally configured password`)
 
 **Files to check**: 
 - `mali-ustvarjalci/.env` (create this)

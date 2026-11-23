@@ -39,7 +39,7 @@ async function main() {
     await prisma.$disconnect();
   }
 }
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : 'Import failed');
+main().catch(() => {
+  console.error({ event: 'import_failed' });
   process.exitCode = 1;
 });

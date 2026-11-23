@@ -151,7 +151,7 @@ SENTRY_DSN=https://...@sentry.io/...
 # These are for development only!
 # AUTH_MODE=mock
 # MOCK_ADMIN_EMAIL=admin@example.com
-# MOCK_ADMIN_PASSWORD=admin123
+# MOCK_ADMIN_PASSWORD=
 # NEXT_PUBLIC_MOCK_MODE=true
 ```
 

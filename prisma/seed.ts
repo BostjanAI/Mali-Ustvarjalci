@@ -1,9 +1,11 @@
+import { seedPassword } from '../src/lib/security';
 import { PrismaClient } from '@prisma/client';
 import { hash } from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
 async function main() {
+  const passwordHash = await hash(seedPassword(process.env.ADMIN_NEW_PASSWORD), 12);
   const supplier = await prisma.supplier.upsert({
     where: { id: 'demo-supplier' },
     update: {},
@@ -15,8 +17,7 @@ async function main() {
     },
   });
 
-  const adminEmail = 'admin@example.com';
-  const passwordHash = await hash('admin123', 10);
+  const adminEmail = (process.env.ADMIN_EMAIL || 'admin@example.com').trim().toLowerCase();
   await prisma.user.upsert({
     where: { email: adminEmail },
     update: {},
@@ -55,7 +56,7 @@ main()
     await prisma.$disconnect();
   })
   .catch(async (e) => {
-    console.error(e);
+    console.error({ event: 'seed_failed' });
     await prisma.$disconnect();
     process.exit(1);
   });

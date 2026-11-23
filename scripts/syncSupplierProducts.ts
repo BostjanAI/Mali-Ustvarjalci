@@ -25,9 +25,7 @@ async function main() {
     await prisma.$disconnect();
   }
 }
-main().catch((error) => {
-  console.error(
-    error instanceof Error ? error.message : 'Supplier sync failed',
-  );
+main().catch(() => {
+  console.error({ event: 'supplier_sync_failed' });
   process.exitCode = 1;
 });

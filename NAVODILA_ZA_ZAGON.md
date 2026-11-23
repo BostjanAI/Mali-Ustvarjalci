@@ -100,7 +100,7 @@ npm run db:seed
 
 Po `db:seed` bo ustvarjen admin uporabnik:
 - Email: `admin@example.com`
-- Geslo: `admin123`
+- Geslo: `lokalno nastavljeno geslo`
 
 > **Takoj po prvem vpisu geslo zamenjaj!**
 

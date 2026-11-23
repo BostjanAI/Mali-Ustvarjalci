@@ -1,3 +1,4 @@
+import { supplierFeedToken } from './security';
 import { prisma } from '@/lib/prisma';
 import { createHash } from 'node:crypto';
 import { parseProductDetails } from './productDetails';
@@ -253,7 +254,7 @@ export async function runSupplierSync() {
     try {
       const items = await fetchFeed(
         supplier.feedUrl,
-        supplier.authToken || process.env.SUPPLIER_API_KEY,
+        supplierFeedToken(supplier.feedUrl, supplier.authToken),
         supplier.id,
       );
       const supplierOptions = (

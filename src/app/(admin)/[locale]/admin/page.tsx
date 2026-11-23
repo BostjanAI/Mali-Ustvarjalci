@@ -1,9 +1,11 @@
+import { requireAdmin } from '@/lib/requireAdmin';
 import Link from 'next/link';
 import { getTranslations } from 'next-intl/server';
 import { prisma } from '@/lib/prisma';
 import { Package, ShoppingCart, Users, TrendingUp } from 'lucide-react';
 
 export default async function AdminPage({ params }: { params: { locale: string } }) {
+  await requireAdmin();
   const locale = params.locale || 'sl';
   const t = await getTranslations();
   

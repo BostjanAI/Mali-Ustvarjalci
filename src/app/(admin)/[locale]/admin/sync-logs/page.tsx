@@ -1,6 +1,8 @@
+import { requireAdmin } from '@/lib/requireAdmin';
 import { prisma } from '@/lib/prisma';
 
 export default async function SyncLogsPage() {
+  await requireAdmin();
   const logs = await prisma.syncLog.findMany({ orderBy: { createdAt: 'desc' }, take: 100 });
   return (
     <div>

@@ -237,7 +237,7 @@ mali-ustvarjalci/
 ### 5. Avtentikacija - 100% ✅
 
 **Mock mode** (razvoj):
-- ✅ Admin: `admin@example.com` / `admin123`
+- ✅ Admin: `admin@example.com` / `lokalno nastavljeno geslo`
 - ✅ User: katerikoli email / `password`
 
 **DB mode** (produkcija):
@@ -404,7 +404,7 @@ NEXTAUTH_URL="http://localhost:3000"
 NEXTAUTH_SECRET="[32+ znakov - generiraj z: openssl rand -base64 32]"
 AUTH_MODE=mock
 MOCK_ADMIN_EMAIL=admin@example.com
-MOCK_ADMIN_PASSWORD=admin123
+MOCK_ADMIN_PASSWORD=
 ```
 
 **Produkcijska konfiguracija:**
@@ -922,7 +922,7 @@ docker run -p 3000:3000 --env-file .env.production mali-ustvarjalci:latest
 6. ✅ Poženi `npm run db:seed`
 7. ✅ Poženi `npm run dev`
 8. ✅ Testiraj: obišči `http://localhost:3000/sl/shop`
-9. ✅ Login v admin: `admin@example.com` / `admin123`
+9. ✅ Login v admin: `admin@example.com` / `lokalno nastavljeno geslo`
 
 **Čas:** 1-2 uri
 
@@ -1747,7 +1747,7 @@ npm run dev
 
 # 5. Obišči
 # http://localhost:3000/sl/shop
-# http://localhost:3000/sl/admin (admin@example.com / admin123)
+# http://localhost:3000/sl/admin (admin@example.com / lokalno nastavljeno geslo)
 ```
 
 **Minimalna `.env` za razvoj:**
@@ -1757,7 +1757,7 @@ NEXTAUTH_URL="http://localhost:3000"
 NEXTAUTH_SECRET="test-secret-minimum-32-characters-long"
 AUTH_MODE=mock
 MOCK_ADMIN_EMAIL=admin@example.com
-MOCK_ADMIN_PASSWORD=admin123
+MOCK_ADMIN_PASSWORD=
 ```
 
 ---

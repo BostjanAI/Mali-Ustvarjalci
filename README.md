@@ -1,5 +1,7 @@
 # Mali Ustvarjalci – Dropshipping Shop
 
+Set ADMIN_NEW_PASSWORD before seeding (at least 16 characters and at most 72 bytes). Rotate existing admin passwords with db:set-admin-password. Development mock administrators require MOCK_ADMIN_PASSWORD. Generate a fresh NEXTAUTH_SECRET for each environment.
+
 Tech stack: Next.js 14 (App Router), TypeScript, Tailwind, Prisma, NextAuth, Stripe, next-intl, Zustand, Zod.
 
 ## Setup
@@ -7,7 +9,7 @@ Tech stack: Next.js 14 (App Router), TypeScript, Tailwind, Prisma, NextAuth, Str
    - DATABASE_URL="file:./dev.db" (SQLite for local dev) or Postgres URL
    - NEXTAUTH_URL, NEXTAUTH_SECRET
    - AUTH_MODE=mock (optional: enables mock auth without DB)
-   - MOCK_ADMIN_EMAIL=admin@example.com / MOCK_ADMIN_PASSWORD=admin123 (optional)
+   - MOCK_ADMIN_EMAIL=admin@example.com / MOCK_ADMIN_PASSWORD= (optional)
    - STRIPE_PUBLISHABLE_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET (when enabling payments)
    - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS (optional)
    - SUPPLIER_FEED_URL, SUPPLIER_ORDER_URL, SUPPLIER_API_KEY
@@ -45,7 +47,7 @@ Tech stack: Next.js 14 (App Router), TypeScript, Tailwind, Prisma, NextAuth, Str
 
 ## Auth
 - Mock mode (`AUTH_MODE=mock`): use Credentials
-  - Admin: `admin@example.com` / `admin123` (configurable)
+  - Admin: `admin@example.com` / `locally configured password` (configurable)
   - User: any email with password `password`
 - DB mode: NextAuth + Prisma adapter (email/password and Google optional)
 

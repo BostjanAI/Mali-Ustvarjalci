@@ -1,3 +1,4 @@
+import { enqueueTrackingNotification } from './trackingNotifications';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { supplierRequestSchema } from './supplierOrderApi';
@@ -250,9 +251,18 @@ export async function pollIkonkaTracking() {
             r.supplierOrderId === order.orderNumber,
         );
         if (row && order.trackingNumber) {
-          const result = await prisma.supplierDispatch.updateMany({
-            where: { id: row.id, trackingNumber: null },
-            data: { trackingNumber: order.trackingNumber },
+          const result = await prisma.$transaction(async (tx) => {
+            const result = await tx.supplierDispatch.updateMany({
+              where: { id: row.id, trackingNumber: null },
+              data: { trackingNumber: order.trackingNumber },
+            });
+            if (result.count)
+              await enqueueTrackingNotification(
+                tx,
+                row.id,
+                order.trackingNumber!,
+              );
+            return result;
           });
           updated += result.count;
         }

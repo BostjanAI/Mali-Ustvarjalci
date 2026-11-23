@@ -135,6 +135,8 @@ function database() {
   }
   function api(s) {
     return {
+      $queryRaw: async () => [{ id: 'TEST-lock' }],
+      operationsAlert: { upsert: async () => ({}) },
       product: {
         findMany: async ({ where }) =>
           copy(s.products.filter((p) => where.id.in.includes(p.id))),
@@ -180,6 +182,7 @@ function database() {
           const row = {
             id: 'o' + ++s.serial,
             supplierStatus: 'pending',
+            refundState: 'none',
             fulfillmentHold: null,
             ...copy(data),
             items: copy(data.items.create),
@@ -236,6 +239,11 @@ function database() {
                   : {}),
               })
             : null;
+        },
+        update: async ({ where, data }) => {
+          const row = s.dispatches.find((r) => matches(r, where));
+          patch(row, data);
+          return copy(row);
         },
         updateMany: async ({ where, data }) => {
           let count = 0;

@@ -10,10 +10,16 @@ export function getTransport() {
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),
     secure: false,
-    auth: process.env.SMTP_USER && process.env.SMTP_PASS ? {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    } : undefined,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
+    auth:
+      process.env.SMTP_USER && process.env.SMTP_PASS
+        ? {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+          }
+        : undefined,
   });
 }
 
@@ -57,7 +63,11 @@ export async function sendOrderConfirmation(to: string, orderId: string) {
   });
 }
 
-export async function sendShippingUpdate(to: string, orderId: string, trackingNumber?: string) {
+export async function sendShippingUpdate(
+  to: string,
+  orderId: string,
+  trackingNumber?: string,
+) {
   const transport = getTransport();
   const { ShippingUpdate } = await import('../mail/ShippingUpdate');
   const html = render(ShippingUpdate({ orderId, trackingNumber } as any));
@@ -70,7 +80,23 @@ export async function sendShippingUpdate(to: string, orderId: string, trackingNu
   });
 }
 
-
-
-
-
+export async function sendTrackingAvailable(
+  to: string,
+  orderId: string,
+  trackingNumber: string,
+) {
+  const transport = getTransport();
+  const { TrackingAvailable } = await import('../mail/TrackingAvailable');
+  await transport.sendMail({
+    from: process.env.SMTP_USER || 'no-reply@mali-ustvarjalci.si',
+    to,
+    subject: 'Podatki za sledenje naročilu ' + orderId,
+    text:
+      'Za naročilo ' +
+      orderId +
+      ' smo prejeli številko za sledenje: ' +
+      trackingNumber +
+      '. Sama številka še ne potrjuje prevzema pošiljke.',
+    html: render(TrackingAvailable({ orderId, trackingNumber })),
+  });
+}

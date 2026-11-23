@@ -27,9 +27,13 @@ export async function requestOrderRefund(
     await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id"=${parsed.orderId} FOR UPDATE`;
     const order = await tx.order.findUnique({
       where: { id: parsed.orderId },
-      include: { refunds: true },
+      include: { refunds: true, dispatches: true },
     });
     if (!order?.stripePaymentIntentId) throw new Error('No refundable payment');
+    if (order.dispatches.some((d) => d.status === 'sending'))
+      throw new Error(
+        'Supplier dispatch is in progress; reconcile it before starting a refund',
+      );
     const existing = order.refunds.find((r) => r.requestKey === key);
     if (existing) {
       if (parsed.amountCents && existing.amountCents !== parsed.amountCents)

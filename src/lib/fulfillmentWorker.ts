@@ -1,3 +1,6 @@
+import { processTrackingNotifications } from './trackingNotifications';
+import type { sendTrackingAvailable } from './email';
+import { nextRetry } from './supplierForward';
 import { pollIkonkaTracking } from './ikonka';
 import Stripe from 'stripe';
 import { prisma } from '@/lib/prisma';
@@ -13,7 +16,10 @@ async function alert(key: string, code: string) {
   });
 }
 export async function runFulfillmentWorker(
-  options: { stripe?: Pick<Stripe, 'checkout' | 'refunds'> | null } = {},
+  options: {
+    stripe?: Pick<Stripe, 'checkout' | 'refunds'> | null;
+    sendTracking?: typeof sendTrackingAvailable;
+  } = {},
 ) {
   if (process.env.NEXT_PUBLIC_MOCK_MODE === 'true') return { disabled: true };
   const now = new Date();
@@ -34,6 +40,7 @@ export async function runFulfillmentWorker(
     const stale = await prisma.checkoutReservation.findMany({
       where: {
         status: { in: ['creating', 'open', 'awaiting_payment'] },
+        reconcileAfter: { lte: now },
         OR: [
           { expiresAt: { lte: now } },
           {
@@ -42,14 +49,35 @@ export async function runFulfillmentWorker(
           },
         ],
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ reconcileAfter: 'asc' }, { createdAt: 'asc' }],
       take: 2,
     });
     for (const r of stale) {
+      const leaseUntil = new Date(Date.now() + 120000);
+      const reservationClaim = {
+        id: r.id,
+        reconcileAfter: leaseUntil,
+        status: { in: ['creating', 'open', 'awaiting_payment'] },
+      };
+      const claim = await prisma.checkoutReservation.updateMany({
+        where: { id: r.id, status: r.status, reconcileAfter: { lte: now } },
+        data: {
+          reconcileAfter: leaseUntil,
+          reconcileAttempts: { increment: 1 },
+        },
+      });
+      if (!claim.count) continue;
       try {
         let id = r.stripeSessionId;
         if (!id && r.stripeRequestJson) {
           if (Date.now() - r.createdAt.getTime() > 86400000) {
+            await prisma.checkoutReservation.updateMany({
+              where: reservationClaim,
+              data: {
+                status: 'needs_review',
+                reconciliationError: 'checkout-identity-needs-review',
+              },
+            });
             await alert(
               'reservation:' + r.id,
               'checkout-identity-needs-review',
@@ -61,10 +89,11 @@ export async function runFulfillmentWorker(
             { idempotencyKey: r.id },
           );
           id = recovered.id;
-          await prisma.checkoutReservation.update({
-            where: { id: r.id },
+          const linked = await prisma.checkoutReservation.updateMany({
+            where: reservationClaim,
             data: { stripeSessionId: id, status: 'open' },
           });
+          if (!linked.count) continue;
         }
         if (!id) {
           if (
@@ -85,12 +114,28 @@ export async function runFulfillmentWorker(
         )
           await recordPaidOrder(session);
         else if (session.status === 'complete')
-          await prisma.checkoutReservation.update({
-            where: { id: r.id },
+          await prisma.checkoutReservation.updateMany({
+            where: reservationClaim,
             data: { status: 'awaiting_payment' },
           });
+        await prisma.checkoutReservation.updateMany({
+          where: reservationClaim,
+          data: {
+            reconcileAfter: nextRetry(1, 900),
+            reconciliationError: null,
+          },
+        });
         reservations++;
       } catch {
+        const exhausted = r.reconcileAttempts + 1 >= 8;
+        await prisma.checkoutReservation.updateMany({
+          where: reservationClaim,
+          data: {
+            ...(exhausted ? { status: 'needs_review' } : {}),
+            reconcileAfter: nextRetry(r.reconcileAttempts + 1),
+            reconciliationError: 'checkout-reconciliation-failed',
+          },
+        });
         await alert('reservation:' + r.id, 'checkout-reconciliation-failed');
       }
     }
@@ -138,8 +183,12 @@ export async function runFulfillmentWorker(
     }
   }
   const tracking = await pollIkonkaTracking();
+  const trackingNotifications = await processTrackingNotifications({
+    send: options.sendTracking,
+  });
   return {
     tracking,
+    trackingNotifications,
     reservations,
     dispatches,
     refunds,

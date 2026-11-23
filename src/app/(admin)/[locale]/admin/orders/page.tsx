@@ -1,3 +1,4 @@
+import { enqueueTrackingNotification } from '@/lib/trackingNotifications';
 import {
   resolveHeldOrder,
   recordSupplierReconciliation,
@@ -85,6 +86,11 @@ export default async function OrdersPage({
     _count: { status: true },
   });
 
+  const reservationReviews = await prisma.checkoutReservation.findMany({
+    where: { status: 'needs_review' },
+    orderBy: { createdAt: 'asc' },
+    take: 20,
+  });
   const alerts = await prisma.operationsAlert.findMany({
     where: { acknowledgedAt: null },
     orderBy: { createdAt: 'desc' },
@@ -92,6 +98,25 @@ export default async function OrdersPage({
   });
   return (
     <div className="space-y-6">
+      {reservationReviews.length > 0 && (
+        <section className="p-4 border rounded">
+          <h2 className="font-bold">Rezervacije za ročni pregled</h2>
+          <p>
+            Preveri identiteto seje v Stripe. Pretek časa sam ne sprosti
+            rezervirane zaloge.
+          </p>
+          {reservationReviews.map((r) => (
+            <div key={r.id} className="mt-2">
+              <code>{r.id}</code>
+              <p>
+                Stripe: {r.stripeSessionId || 'še ni potrjen'} ·{' '}
+                {r.reconciliationError || 'potreben pregled'} · Poskusi:{' '}
+                {r.reconcileAttempts}
+              </p>
+            </div>
+          ))}
+        </section>
+      )}
       {searchParams.notice && (
         <p role="status">
           {searchParams.notice === 'refund-requested'
@@ -264,6 +289,18 @@ export default async function OrdersPage({
                             {d.nextAttemptAt.toLocaleString('sl-SI')}
                           </p>
                           <SupplierReconciliation dispatchId={d.id} />
+                          {d.trackingNumber && (
+                            <form action={queueTrackingNotice}>
+                              <input
+                                type="hidden"
+                                name="dispatchId"
+                                value={d.id}
+                              />
+                              <button className="border rounded px-2 mt-2">
+                                Pripravi obvestilo o sledenju
+                              </button>
+                            </form>
+                          )}
                           {d.lastError && (
                             <p className="text-red-700">{d.lastError}</p>
                           )}
@@ -505,7 +542,7 @@ function SupplierReconciliation({ dispatchId }: { dispatchId: string }) {
           Potrditev
           <select name="resolution" className="border block">
             <option value="cancel_confirmed">
-              Dobavitelj je potrdil preklic
+              Prekliči neposredovano / potrdi preklic dobavitelja
             </option>
             <option value="return_confirmed">
               Dobavitelj je potrdil prejem vračila
@@ -528,4 +565,28 @@ function SupplierReconciliation({ dispatchId }: { dispatchId: string }) {
       </form>
     </details>
   );
+}
+
+async function queueTrackingNotice(form: FormData) {
+  'use server';
+  const session = await requireAdmin();
+  await prisma.$transaction(async (tx) => {
+    const dispatch = await tx.supplierDispatch.findUniqueOrThrow({
+      where: { id: String(form.get('dispatchId')) },
+    });
+    if (!dispatch.trackingNumber) throw new Error('Tracking number required');
+    await enqueueTrackingNotification(tx, dispatch.id, dispatch.trackingNumber);
+    await tx.auditLog.create({
+      data: {
+        userId: (session.user as { id: string }).id,
+        action: 'tracking.notification.queued',
+        metadata: JSON.stringify({
+          orderId: dispatch.orderId,
+          dispatchId: dispatch.id,
+        }),
+      },
+    });
+  });
+  revalidatePath('/sl/admin/orders');
+  revalidatePath('/en/admin/orders');
 }

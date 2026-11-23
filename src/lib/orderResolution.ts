@@ -95,13 +95,49 @@ export async function recordSupplierReconciliation(
   if (evidence.trim().length < 12)
     throw new Error('Supplier evidence required');
   return prisma.$transaction(async (tx) => {
+    const reference = await tx.supplierDispatch.findUniqueOrThrow({
+      where: { id: dispatchId },
+      select: { orderId: true },
+    });
+    await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id"=${reference.orderId} FOR UPDATE`;
+    // Read after acquiring the same lock used by dispatch and refund.
     const d = await tx.supplierDispatch.findUniqueOrThrow({
       where: { id: dispatchId },
       include: { order: true },
     });
-    await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id"=${d.orderId} FOR UPDATE`;
-    if (resolution === 'stock_included') {
-      if (!d.sentAt || !d.order.reservationId)
+    if (d.status === 'sending')
+      throw new Error(
+        'Supplier dispatch is in progress; reconciliation must wait',
+      );
+    const neverAttempted =
+      ['pending', 'failed', 'needs_review', 'cancelled'].includes(d.status) &&
+      d.attempts === 0 &&
+      !d.lastAttemptAt &&
+      !d.sentAt &&
+      !d.supplierOrderId &&
+      !d.endpointUrl;
+    const cancelLocally = resolution === 'cancel_confirmed' && neverAttempted;
+    if (cancelLocally) {
+      await tx.supplierDispatch.update({
+        where: { id: dispatchId },
+        data: {
+          status: 'cancelled',
+          supplierStatus: 'cancelled',
+          reconciliationStatus: resolution,
+          reconciliationNote: evidence,
+        },
+      });
+      const holds = new Set(
+        (d.order.fulfillmentHold || '').split(',').filter(Boolean),
+      );
+      holds.add('supplier-cancellation-reconciliation');
+      await tx.order.update({
+        where: { id: d.orderId },
+        data: { fulfillmentHold: [...holds].join(',') },
+      });
+    }
+    if (cancelLocally || resolution === 'stock_included') {
+      if (!d.order.reservationId)
         throw new Error('No stock allocation to reconcile');
       const items = await tx.reservationItem.findMany({
         where: {
@@ -111,20 +147,35 @@ export async function recordSupplierReconciliation(
         },
         orderBy: { productId: 'asc' },
       });
+      const cutoff = d.sentAt || d.lastAttemptAt;
+      if (
+        !cancelLocally &&
+        items.length &&
+        (!cutoff ||
+          (!d.sentAt &&
+            !['cancel_confirmed', 'return_confirmed'].includes(
+              d.reconciliationStatus,
+            )))
+      )
+        throw new Error(
+          'A confirmed supplier outcome is required for attempted orders',
+        );
       for (const item of items) {
         await tx.$queryRaw`SELECT "id" FROM "Inventory" WHERE "productId"=${item.productId} FOR UPDATE`;
-        const inventory = await tx.inventory.findUniqueOrThrow({
-          where: { productId: item.productId },
-        });
-        if (
-          !inventory.syncedAt ||
-          inventory.syncedAt <= d.sentAt ||
-          Date.now() - inventory.syncedAt.getTime() > 3600000
-        )
-          throw new Error('Fresh supplier snapshot required after order');
+        if (!cancelLocally) {
+          const inventory = await tx.inventory.findUniqueOrThrow({
+            where: { productId: item.productId },
+          });
+          if (
+            !inventory.syncedAt ||
+            inventory.syncedAt <= cutoff! ||
+            Date.now() - inventory.syncedAt.getTime() > 3600000
+          )
+            throw new Error('Fresh supplier snapshot required after order');
+        }
         const claimed = await tx.reservationItem.updateMany({
           where: { id: item.id, status: 'committed' },
-          data: { status: 'accounted' },
+          data: { status: cancelLocally ? 'released' : 'accounted' },
         });
         if (claimed.count)
           await tx.inventory.update({
@@ -149,7 +200,12 @@ export async function recordSupplierReconciliation(
       data: {
         userId,
         action: 'supplier.reconcile.' + resolution,
-        metadata: JSON.stringify({ orderId: d.orderId, dispatchId, evidence }),
+        metadata: JSON.stringify({
+          orderId: d.orderId,
+          dispatchId,
+          evidence,
+          allocationReleasedLocally: cancelLocally,
+        }),
       },
     });
   });

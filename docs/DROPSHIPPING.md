@@ -8,7 +8,7 @@ Povezava še ni preizkušena z dejanskim uporabniškim računom Ikonka. Pravi fe
 
 ## Migracije in CI
 
-Pripravljeni sta migraciji 20261122020000_operations in 20261122021000_stock_safeguards. Pred produkcijskim prehodom naredi varnostno kopijo in v dogovorjenem okolju izvedi npx prisma migrate deploy, npx prisma generate ter novo gradnjo. Migracija ne izmisli dostavnih naslovov starih naročil. Obstoječi dnevni ali prazni interval dobaviteljev preide na @15min. Posredovanje ostane izklopljeno, dokler ga skrbnik ne vklopi.
+Pripravljeni sta migraciji 20261122020000_operations, 20261122021000_stock_safeguards in 20261122022000_queue_reconciliation. Pred produkcijskim prehodom naredi varnostno kopijo in v dogovorjenem okolju izvedi npx prisma migrate deploy, npx prisma generate ter novo gradnjo. Migracija ne izmisli dostavnih naslovov starih naročil. Obstoječi dnevni ali prazni interval dobaviteljev preide na @15min. Posredovanje ostane izklopljeno, dokler ga skrbnik ne vklopi.
 
 CI uporablja izoliran PostgreSQL 16, izvede vse migracije, Jest z JSX, PostgreSQL integracijske preizkuse, regresijske preizkuse kataloga/plačil, gradnjo in Playwright. Enotski testi ne uporabljajo baze. Integracijski skript zahteva izrecen TEST_DATABASE_URL z imenom baze, ki se konča z _test. Ne uporabljaj produkcijske baze za teste.
 
@@ -57,3 +57,21 @@ Za posodobitve vračil v Stripe nastavi refund.created, refund.updated in refund
 ## Preizkusi
 
 npm test -- --ci --runInBand; npm run test:integration (izrecen TEST_DATABASE_URL); npm run verify:catalog; npm run verify:storefront; npm run verify:dropshipping; npm run typecheck; npm run lint; npm run build; npm run e2e. E2E sam zažene zgrajen demonstracijski strežnik in ga po preverjanju ustavi. Integracijski testi imajo navidezni Stripe in navideznega dobavitelja; ne premikajo resničnega denarja.
+
+## Preklic pred posredovanjem in skupni zaklep
+
+Prevzem pošiljke in začetek vračila zakleneta isto vrstico Order ter pod zaklepom znova preverita sveže stanje. Že prebran podatek izven transakcije ne dovoli posredovanja. Če je katera pošiljka v stanju sending, se nova zahteva za finančno vračilo zavrne pred ustvarjanjem RefundOperation in pred klicem Stripe. Po zaključku poskusa je treba razrešiti izid pri dobavitelju in ponovno zahtevati vračilo. Ko vračilo pridobi zaklep prvo, njegovo zadržanje blokira nov prevzem pošiljke. Omrežni klic dobavitelju ni znotraj dolge transakcije.
+
+Potrditev preklica pošiljke, za katero ni bilo nobenega poskusa (0 attempts ter brez lastAttemptAt, endpointUrl, sentAt ali supplierOrderId), jo trajno označi cancelled. Samo njene committed postavke se enkrat spremenijo v released in zmanjšajo allocatedQuantity. Fizična quantity se ne poveča in drugi dobavitelji ne dobijo sproščene količine. Naročilo ostane zadržano za poslovno/finančno razrešitev. Pri že poskušeni pošiljki sam preklic ne sprosti dodelitve: potrebna sta potrjen izid in svež vir, ki ga vključuje.
+
+## Pravičnost vrste rezervacij
+
+Rezervacije imajo reconcileAfter, reconcileAttempts in reconciliationError. Izvajalec prevzame samo zapadle zapise, jim časovno rezervira obdelavo in po napaki nastavi naraščajoči odmik. Nejasna identiteta Stripe seje po 24 urah preide v needs_review in se izloči iz samodejne vrste; njena zaloga ostane zadržana. Enako velja po osmih zaporednih napakah. Skrbnik vidi take zapise pri naročilih. Zastarel izvajalec ne prepiše novejšega prevzema.
+
+## Obvestila o sledenju Ikonke
+
+Pridobljena sledilna številka in TrackingNotification nastaneta v isti transakciji. Izvajalec nato obdela ločeno trajno vrsto e-pošte. Enolični par dispatchId/trackingNumber prepreči podvojeno pripravo obvestila; napaka SMTP ne izgubi podatka ali zahteve za ponovno pošiljanje. Brez nastavljene SMTP_HOST se obvestilo ne označi kot poslano in nastane opozorilo. Za prej shranjene številke lahko skrbnik izrecno pripravi obvestilo z gumbom pri pošiljki; samodejno množično obveščanje zgodovine ni vključeno.
+
+Obvestilo pove, da so podatki za sledenje na voljo; sama številka ne dokazuje odpreme. Vrsta uporablja prevzem s časovno omejitvijo in ponovne poskuse. Kot pri običajnem SMTP je ob prekinitvi procesa po sprejemu pošte in pred potrditvijo v bazi možna ponovljena dostava.
+
+Pred kontrolnim nakupom pri dejanski Ikonki so potrebni potrjeni podatki podjetja, migrirana prava baza, račun in plačilni/dostavni pogoji, konkretni SKU ter odobrena omejitev skupnega zneska in prejemnik. Najprej preveri checkOnly, nato je mogoče izvesti izrecno dogovorjen nakup in preveriti preklic pri dobavitelju; lokalni preklic ni oddaljeni preklic že oddanega naročila.

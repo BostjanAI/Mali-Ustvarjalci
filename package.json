@@ -22,7 +22,7 @@
     "verify:catalog": "node scripts/verify-catalog.cjs",
     "verify:dropshipping": "node scripts/verify-dropshipping.cjs",
     "worker:fulfillment": "tsx scripts/fulfillmentWorker.ts",
-    "test:integration": "tsx scripts/verify-postgres.ts"
+    "test:integration": "node scripts/verify-integration.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

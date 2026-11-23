@@ -246,6 +246,7 @@ model SupplierDispatch {
   reconciliationNote String?
   stockAccountedAt DateTime?
   labelUrl String?
+  trackingNotifications TrackingNotification[]
   sentAt DateTime?
   lastError String?
   createdAt DateTime @default(now())
@@ -260,6 +261,9 @@ model SupplierDispatch {
 model CheckoutReservation {
  id String @id @default(cuid())
  status String @default("creating")
+ reconcileAfter DateTime @default(now())
+ reconcileAttempts Int @default(0)
+ reconciliationError String?
  stripeSessionId String? @unique
  cartJson String
  stripeRequestJson String?
@@ -270,6 +274,7 @@ model CheckoutReservation {
  items ReservationItem[]
  order Order?
  @@index([status,expiresAt])
+ @@index([status,reconcileAfter])
 }
 model ReservationItem {
  id String @id @default(cuid())
@@ -304,4 +309,21 @@ model OperationsAlert {
  dispatchId String?
  acknowledgedAt DateTime?
  createdAt DateTime @default(now())
+}
+
+model TrackingNotification {
+ id String @id @default(cuid())
+ dispatchId String
+ trackingNumber String
+ status String @default("pending")
+ attempts Int @default(0)
+ attemptToken String?
+ nextAttemptAt DateTime @default(now())
+ sentAt DateTime?
+ lastError String?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ dispatch SupplierDispatch @relation(fields:[dispatchId],references:[id],onDelete:Cascade)
+ @@unique([dispatchId,trackingNumber])
+ @@index([status,nextAttemptAt])
 }

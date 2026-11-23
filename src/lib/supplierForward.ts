@@ -1,10 +1,7 @@
-import { prisma } from '@/lib/prisma';
 import { readShippingAddress } from './orderDelivery';
-import {
-  validOrderEndpoint,
-  supplierRequestSchema,
-  supplierResponseId,
-} from './supplierOrderApi';
+import { prisma } from '@/lib/prisma';
+import { claimSupplierDispatch } from './dispatchClaim';
+import { supplierResponseId } from './supplierOrderApi';
 import { callIkonka, SupplierApiError } from './ikonka';
 export async function refreshSupplierStatus(orderId: string) {
   const rows = await prisma.supplierDispatch.findMany({ where: { orderId } });
@@ -86,106 +83,22 @@ export async function forwardOrderToSupplier(
     result.blocked++;
     return result;
   }
-  for (const dispatch of order.dispatches) {
-    if (options.dispatchId && options.dispatchId !== dispatch.id) continue;
-    if (dispatch.status === 'sent') continue;
-    if (
-      dispatch.status === 'needs_review' ||
-      (!options.force &&
-        dispatch.nextAttemptAt &&
-        dispatch.nextAttemptAt.getTime() > Date.now())
-    ) {
-      result.blocked++;
+  for (const candidate of order.dispatches) {
+    if (options.dispatchId && options.dispatchId !== candidate.id) continue;
+    const claim = await claimSupplierDispatch(
+      order.id,
+      candidate.id,
+      options.force,
+    );
+    if (claim.state !== 'claimed') {
+      if (claim.retryable) result.retryable = true;
+      else result.blocked++;
       continue;
     }
-    const supplier = dispatch.supplier;
-    if (
-      !supplier.active ||
-      !supplier.orderForwardingEnabled ||
-      !supplier.apiUrl ||
-      !validOrderEndpoint(supplier.apiUrl) ||
-      !supplier.orderAuthToken
-    ) {
-      result.blocked++;
-      await prisma.supplierDispatch.updateMany({
-        where: { id: dispatch.id, status: { in: ['pending', 'failed'] } },
-        data: {
-          lastError: 'supplier-order-api-not-configured',
-          nextAttemptAt: nextRetry(1, 3600),
-        },
-      });
-      await prisma.operationsAlert.upsert({
-        where: { key: 'supplier-config:' + supplier.id },
-        create: {
-          key: 'supplier-config:' + supplier.id,
-          code: 'supplier-order-api-not-configured',
-          orderId: order.id,
-          dispatchId: dispatch.id,
-        },
-        update: {},
-      });
-      continue;
-    }
-    if (dispatch.endpointUrl && dispatch.endpointUrl !== supplier.apiUrl) {
-      result.blocked++;
-      await prisma.supplierDispatch.updateMany({
-        where: {
-          id: dispatch.id,
-          status: { in: ['pending', 'failed', 'sending'] },
-        },
-        data: {
-          status: 'needs_review',
-          lastError: 'endpoint-changed-after-attempt',
-        },
-      });
-      continue;
-    }
-    let snapshot: unknown;
-    try {
-      snapshot = JSON.parse(dispatch.requestJson);
-    } catch {
-      snapshot = null;
-    }
-    const parsed = supplierRequestSchema.safeParse(snapshot);
-    if (!parsed.success || parsed.data.orderId !== order.id) {
-      result.blocked++;
-      await prisma.supplierDispatch.updateMany({
-        where: {
-          id: dispatch.id,
-          status: { in: ['pending', 'failed', 'sending'] },
-        },
-        data: {
-          status: 'needs_review',
-          lastError: 'invalid-dispatch-snapshot',
-        },
-      });
-      continue;
-    }
-    const attemptAt = new Date();
-    const claim = await prisma.supplierDispatch.updateMany({
-      where: {
-        id: dispatch.id,
-        OR: [
-          { status: { in: ['pending', 'failed'] } },
-          {
-            status: 'sending',
-            lastAttemptAt: { lt: new Date(attemptAt.getTime() - 120000) },
-          },
-        ],
-        ...(!options.force ? { nextAttemptAt: { lte: attemptAt } } : {}),
-      },
-      data: {
-        status: 'sending',
-        lastAttemptAt: attemptAt,
-        attempts: { increment: 1 },
-        endpointUrl: supplier.apiUrl,
-        lastError: null,
-      },
-    });
-    if (!claim.count) {
-      result.retryable = true;
-      continue;
-    }
+    const dispatch = claim.dispatch;
+    const supplier = claim.supplier;
+    const parsed = { data: claim.request };
+    const attemptAt = claim.attemptAt;
     let code = 'supplier-network-or-timeout';
     let retryable = true;
     let retryAfter = 0;
